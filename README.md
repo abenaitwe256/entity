@@ -23,8 +23,7 @@ This repository contains an early single-user prototype scaffold focused on core
 - Pepper's Ghost hologram viewport mode
 - Camera passthrough toggle for phone-screen presentation
 
-Planned next steps:
-- MediaPipe hand tracking for mid-air "touch" (integrated in `src/interaction/handTracking.js`)
+Implemented hand tracking for mid-air "touch" using MediaPipe (`src/interaction/handTracking.js`).
 - Multi-user sync (WebRTC/Yjs or Colyseus/LiveKit data)
 - Spatial/proximity voice
 - Richer creature behaviors and assets (glTF)
@@ -87,7 +86,7 @@ The software renders four views; physical pyramid dimensions and calibration aff
 
 ## Hand tracking setup
 
-Hand tracking starts after the first pointer/touch interaction and requests camera permission. Use HTTPS (or `localhost` during development), allow camera access, and pinch your thumb and index finger while pointing at a pickable object to grab and move it. Reset stops the camera; the next pointer/touch interaction starts tracking again.
+Hand tracking starts only when you tap the **Hand tracking** button. Use HTTPS (or `localhost` during development), allow camera access, show one hand to the front camera, and pinch your thumb and index finger while pointing at a pickable object. The status line reports camera permission, camera readiness, and hand detection. Tap **Stop hands** to release the camera.
 
 MediaPipe Hands and Camera Utils are loaded from jsDelivr in `index.html`.
 
