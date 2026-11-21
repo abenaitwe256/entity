@@ -1,4 +1,5 @@
 import { World } from './scene/world.js';
+import { PlayerController } from './interaction/playerController.js';
 import { PhysicsWorld } from './physics/physicsWorld.js';
 import { PointerInteraction } from './interaction/pointer.js';
 import { HandTracker } from './interaction/handTracking.js';
@@ -24,6 +25,7 @@ function setStatus(text) {
 
 const physics = new PhysicsWorld();
 const world = new World(canvas, physics);
+const playerController = new PlayerController(world);
 const hologram = new HologramRenderer(world.renderer, world.scene, world.camera);
 const audio = new AudioManager(world.camera);
 
@@ -208,6 +210,7 @@ function animate(now) {
   last = now;
 
   world.update(dt);
+  playerController.update(dt);
   physics.step(dt);
   physics.syncMeshes();
   pointer.update();
