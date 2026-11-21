@@ -108,3 +108,15 @@ MediaPipe Hands and Camera Utils are loaded from jsDelivr in `index.html`.
 ## License
 
 MIT — see `LICENSE`.
+
+
+## Open-world city prototype
+
+The `feature/open-world-hd-city` branch adds an original procedural downtown environment with detailed building facades, roads, sidewalks, trees, street lamps, parked cars, soft shadows, ACES tone mapping, and a third-person player. It is an original GTA-inspired open-world prototype, not a recreation of GTA assets or map.
+
+### Controls
+- Desktop: WASD or arrow keys to walk; hold Shift to run.
+- Phone/tablet: use the on-screen left joystick to move and the RUN button to sprint.
+- The existing miniature props remain available for pointer and hand-tracking experiments.
+
+The scene uses Three.js geometry and materials generated in code. Rendering resolution follows the device display pixel ratio (capped at 2 for performance); high-quality shadows and lighting are enabled. This is a visual/gameplay foundation, not yet a complete commercial-scale open-world game: driving physics, traffic AI, missions, interiors, and streaming large map regions remain future work.
