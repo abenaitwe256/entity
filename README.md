@@ -24,7 +24,7 @@ This repository contains an early single-user prototype scaffold focused on core
 - Camera passthrough toggle for phone-screen presentation
 
 Planned next steps:
-- MediaPipe hand tracking integration for mid-air "touch"
+- MediaPipe hand tracking for mid-air "touch" (integrated in `src/interaction/handTracking.js`)
 - Multi-user sync (WebRTC/Yjs or Colyseus/LiveKit data)
 - Spatial/proximity voice
 - Richer creature behaviors and assets (glTF)
@@ -85,11 +85,17 @@ The software renders four views; physical pyramid dimensions and calibration aff
 └─ hologram/          # (planned) pyramid templates/calibration
 ```
 
+## Hand tracking setup
+
+Hand tracking starts after the first pointer/touch interaction and requests camera permission. Use HTTPS (or `localhost` during development), allow camera access, and pinch your thumb and index finger while pointing at a pickable object to grab and move it. Reset stops the camera; the next pointer/touch interaction starts tracking again.
+
+MediaPipe Hands and Camera Utils are loaded from jsDelivr in `index.html`.
+
 ## Open-source stack (current/proposed)
 
 - **Rendering:** Three.js (MIT)
 - **Physics:** cannon-es (MIT)
-- **Hand tracking (planned):** MediaPipe Hands (Apache-2.0)
+- **Hand tracking:** MediaPipe Hands (Apache-2.0)
 - **Voice:** Web Speech API (browser) now; Whisper.cpp / Vosk for offline/on-device later
 - **Multi-user (planned):** Yjs + WebRTC or LiveKit
 

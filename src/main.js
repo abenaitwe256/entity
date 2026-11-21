@@ -1,6 +1,7 @@
 import { World } from './scene/world.js';
 import { PhysicsWorld } from './physics/physicsWorld.js';
 import { PointerInteraction } from './interaction/pointer.js';
+import { HandTracker } from './interaction/handTracking.js';
 import { VoiceController } from './interaction/voice.js';
 import { HologramRenderer } from './hologram/hologramRenderer.js';
 import { initUI } from './ui/ui.js';
@@ -46,6 +47,29 @@ const voice = new VoiceController({
   onCommand: (cmd) => handleVoiceCommand(cmd),
   onStatus: (msg) => setStatus(msg),
 });
+
+const handTracker = new HandTracker({
+  canvas,
+  camera: world.camera,
+  physics,
+  pickables: world.pickables,
+  onGrab: (obj) => {
+    state.selected = obj;
+    audio.playGrab(obj?.userData?.name || 'object');
+    setStatus(`Hand grabbed ${obj?.userData?.label || 'object'} • ${state.mode} mode`);
+  },
+  onRelease: () => {
+    setStatus(`${state.mode === 'hologram' ? 'Hologram' : 'Screen'} mode • pinch to grab`);
+  },
+});
+
+function startHandTracking() {
+  handTracker.start().catch((error) => {
+    setStatus('Hand tracking unavailable. Check camera permission and HTTPS.');
+    console.warn(error);
+  });
+}
+window.addEventListener('pointerdown', startHandTracking);
 
 function handleVoiceCommand(cmd) {
   const target = state.selected || world.getDefaultTarget();
@@ -126,6 +150,7 @@ function toggleVoice(on) {
 }
 
 function resetScene() {
+  handTracker.stop();
   pointer.release();
   world.reset();
   physics.reset();
