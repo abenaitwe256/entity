@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Holo Miniature World</title>
+    <meta name="description" content="Open-source prototype: interact with miniature virtual worlds via touch, voice, and holographic/phone presentation." />
+    <link rel="stylesheet" href="./src/ui/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+          "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <video id="camera-bg" autoplay playsinline muted></video>
+    <canvas id="app"></canvas>
+
+    <div id="hud">
+      <div class="hud-top">
+        <div class="brand">
+          <strong>Holo Miniature World</strong>
+          <span class="tag">prototype</span>
+        </div>
+        <div class="status" id="status">Screen mode • drag objects • try voice</div>
+      </div>
+
+      <div class="hud-controls">
+        <button id="btn-screen" class="active" title="Normal phone/screen view">Screen</button>
+        <button id="btn-hologram" title="Pepper's Ghost 4-view mode">Hologram</button>
+        <button id="btn-camera" title="Toggle camera passthrough (screen mode)">Camera</button>
+        <button id="btn-voice" title="Toggle voice commands">Voice</button>
+        <button id="btn-reset" title="Reset scene">Reset</button>
+      </div>
+
+      <div class="hud-help" id="hud-help">
+        <div><b>Touch/Mouse:</b> tap & drag to grab, move, and toss objects.</div>
+        <div><b>Voice:</b> "grow", "shrink", "spin", "jump", "reset", "planet", "creature".</div>
+        <div><b>Hologram:</b> place a Pepper's Ghost pyramid on the screen for reflected 3D view.</div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
