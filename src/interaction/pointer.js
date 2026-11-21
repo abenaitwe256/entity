@@ -49,6 +49,8 @@ export class PointerInteraction {
 
   _onDown(event) {
     if (this.active) return;
+    // Keep mobile browsers from converting a drag gesture into page scrolling.
+    if (event.cancelable) event.preventDefault();
     this._setFromEvent(event);
     const intersects = this.raycaster.intersectObjects(this.pickables, true);
     if (!intersects.length) return;
@@ -72,7 +74,8 @@ export class PointerInteraction {
       body.velocity.setZero();
       body.angularVelocity.setZero();
       body.wakeUp();
-      body.type = 2;
+      // KINEMATIC bodies follow the user's pointer; STATIC bodies cannot be moved reliably.
+      body.type = 4;
       body.mass = 0;
       body.updateMassProperties();
     }
@@ -82,6 +85,7 @@ export class PointerInteraction {
 
   _onMove(event) {
     if (!this.active || event.pointerId !== this.pointerId || !this.dragObject) return;
+    if (event.cancelable) event.preventDefault();
     this._setFromEvent(event);
     if (this.raycaster.ray.intersectPlane(this.plane, this.hitPoint)) {
       this.targetPos.copy(this.hitPoint).add(this.offset);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export class HandTracker {
-  constructor({ canvas, camera, physics, pickables, onGrab, onRelease, onMove }) {
+  constructor({ canvas, camera, physics, pickables, onGrab, onRelease, onMove, onStatus }) {
     this.canvas = canvas;
     this.camera = camera;
     this.physics = physics;
@@ -9,18 +9,23 @@ export class HandTracker {
     this.onGrab = onGrab;
     this.onRelease = onRelease;
     this.onMove = onMove;
+    this.onStatus = onStatus;
     this.video = document.createElement('video');
     this.video.setAttribute('playsinline', '');
+    this.video.setAttribute('webkit-playsinline', '');
     this.video.muted = true;
+    this.video.autoplay = true;
     this.video.width = 640;
     this.video.height = 480;
+    this.stream = null;
     this.hands = null;
-    this.cameraHelper = null;
     this.active = false;
     this.starting = false;
-    this.currentHand = null;
+    this.frameId = null;
+    this.processing = false;
+    this.lastFrameAt = 0;
+    this.handPresent = false;
     this.grabbedObject = null;
-    this.cameraReady = null;
     this.offset = new THREE.Vector3();
     this.plane = new THREE.Plane();
     this.planeNormal = new THREE.Vector3();
@@ -29,90 +34,152 @@ export class HandTracker {
     this.raycaster = new THREE.Raycaster();
   }
 
-  async _initCamera() {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('Camera access requires HTTPS (or localhost) and a supported browser.');
+  _status(message) {
+    this.onStatus?.(message);
+  }
+
+  _cameraError(error) {
+    const name = error?.name || '';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+      return 'Camera permission blocked. Allow camera access for this site in Chrome settings, then retry.';
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: 640, height: 480 },
-      audio: false
-    });
-    this.video.srcObject = stream;
-    await this.video.play();
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return 'No camera was found on this device.';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return 'Camera is busy in another app or browser tab. Close other camera apps and retry.';
+    }
+    if (name === 'OverconstrainedError') {
+      return 'This camera does not support the requested settings. Retry with default camera settings.';
+    }
+    if (!window.isSecureContext) {
+      return 'Camera requires HTTPS. Deploy this site to GitHub Pages or another HTTPS host.';
+    }
+    return error?.message || 'Could not start the camera. Check browser permissions and retry.';
   }
 
   async start() {
-    if (this.active || this.starting) return;
+    if (this.active) return true;
+    if (this.starting) return false;
     this.starting = true;
+    this._status('Requesting camera permission…');
+
     try {
-      this.cameraReady ??= this._initCamera();
-      await this.cameraReady;
-      if (typeof window.Hands !== 'function' || typeof window.Camera !== 'function') {
-        throw new Error('MediaPipe scripts are missing. Load hands.js and camera_utils.js in index.html.');
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Camera requires a secure HTTPS website (or localhost).');
       }
+      if (typeof window.Hands !== 'function') {
+        throw new Error('MediaPipe Hands did not load. Check your internet connection and reload the page.');
+      }
+
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: 'user' },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30, max: 30 }
+        }
+      });
+
+      this.video.srcObject = this.stream;
+      await this.video.play();
+
       this.hands = new window.Hands({
         locateFile: (file) => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/' + file
       });
       this.hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.6
+        modelComplexity: 0,
+        minDetectionConfidence: 0.55,
+        minTrackingConfidence: 0.5
       });
       this.hands.onResults((results) => this._onResults(results));
-      this.cameraHelper = new window.Camera(this.video, {
-        onFrame: async () => {
-          if (this.active && this.hands) await this.hands.send({ image: this.video });
-        },
-        width: 640,
-        height: 480
-      });
+
       this.active = true;
-      await this.cameraHelper.start();
+      this.handPresent = false;
+      this._status('Camera ready • show one hand to the camera');
+      this._scheduleFrame();
+      return true;
     } catch (error) {
-      this.active = false;
-      this.cameraReady = null;
-      console.warn('Unable to start hand tracking:', error);
+      console.warn('Hand tracking startup failed:', error);
       this.stop();
+      this._status(this._cameraError(error));
       throw error;
     } finally {
       this.starting = false;
     }
   }
 
+  _scheduleFrame() {
+    if (!this.active || this.frameId !== null) return;
+    this.frameId = requestAnimationFrame(async (now) => {
+      this.frameId = null;
+      if (!this.active || !this.hands || this.processing) return;
+      if (now - this.lastFrameAt < 30) {
+        this._scheduleFrame();
+        return;
+      }
+      if (this.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        this._scheduleFrame();
+        return;
+      }
+      this.lastFrameAt = now;
+      this.processing = true;
+      try {
+        await this.hands.send({ image: this.video });
+      } catch (error) {
+        console.warn('MediaPipe frame error:', error);
+        this._status('Hand tracking paused. Check your connection and restart tracking.');
+        this.stop();
+      } finally {
+        this.processing = false;
+        this._scheduleFrame();
+      }
+    });
+  }
+
   stop() {
     this.active = false;
-    this.currentHand = null;
+    if (this.frameId !== null) cancelAnimationFrame(this.frameId);
+    this.frameId = null;
+    this.handPresent = false;
     if (this.grabbedObject) this._releaseHand();
-    if (this.cameraHelper?.stop) this.cameraHelper.stop();
-    this.cameraHelper = null;
+
     if (this.hands) {
-      this.hands.close();
+      try { this.hands.close(); } catch (error) { console.warn(error); }
       this.hands = null;
     }
-    const stream = this.video.srcObject;
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      this.video.srcObject = null;
+    if (this.stream) {
+      this.stream.getTracks().forEach((track) => track.stop());
+      this.stream = null;
     }
-    this.cameraReady = null;
+    this.video.pause();
+    this.video.srcObject = null;
+    this._status('Hand tracking stopped');
   }
 
   _onResults(results) {
     const landmarks = results.multiHandLandmarks?.[0];
     if (!landmarks) {
+      if (this.handPresent) this._status('Camera ready • no hand detected');
+      this.handPresent = false;
       if (this.grabbedObject) this._releaseHand();
-      this.currentHand = null;
       return;
     }
+
+    if (!this.handPresent) this._status('Hand detected • pinch thumb and index finger to grab');
+    this.handPresent = true;
     this.currentHand = landmarks;
+
     const indexTip = landmarks[8];
     const thumbTip = landmarks[4];
     const x = 1 - indexTip.x;
     const y = indexTip.y;
     const z = indexTip.z || 0;
     const pinchDistance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-    const isPinching = pinchDistance < 0.06;
+    const isPinching = pinchDistance < 0.065;
+
     this._setRayFromScreen(x, y);
     if (isPinching && !this.grabbedObject) this._tryGrab();
     else if (!isPinching && this.grabbedObject) this._releaseHand();
@@ -130,6 +197,7 @@ export class HandTracker {
     let root = intersections[0].object;
     while (root && root.parent && !this.pickables.includes(root)) root = root.parent;
     if (!root || !this.pickables.includes(root)) return;
+
     this.grabbedObject = root;
     const body = root.userData.physicsBody;
     if (body) {
@@ -144,6 +212,7 @@ export class HandTracker {
     this.plane.setFromNormalAndCoplanarPoint(this.planeNormal, root.position);
     this.raycaster.ray.intersectPlane(this.plane, this.hitPoint);
     this.offset.copy(root.position).sub(this.hitPoint);
+    this._status('Object grabbed • release pinch to drop');
     this.onGrab?.(root);
   }
 

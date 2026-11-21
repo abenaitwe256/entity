@@ -61,15 +61,32 @@ const handTracker = new HandTracker({
   onRelease: () => {
     setStatus(`${state.mode === 'hologram' ? 'Hologram' : 'Screen'} mode • pinch to grab`);
   },
+  onStatus: (message) => setStatus(message),
 });
 
-function startHandTracking() {
-  handTracker.start().catch((error) => {
-    setStatus('Hand tracking unavailable. Check camera permission and HTTPS.');
+const handButton = document.getElementById('btn-hand');
+async function toggleHandTracking() {
+  if (handTracker.active) {
+    handTracker.stop();
+    handButton?.classList.remove('active');
+    handButton?.setAttribute('aria-pressed', 'false');
+    if (handButton) handButton.textContent = 'Hand tracking';
+    return;
+  }
+  if (handTracker.starting) return;
+  try {
+    await handTracker.start();
+    handButton?.classList.add('active');
+    handButton?.setAttribute('aria-pressed', 'true');
+    if (handButton) handButton.textContent = 'Stop hands';
+  } catch (error) {
+    handButton?.classList.remove('active');
+    handButton?.setAttribute('aria-pressed', 'false');
+    if (handButton) handButton.textContent = 'Retry hands';
     console.warn(error);
-  });
+  }
 }
-window.addEventListener('pointerdown', startHandTracking);
+handButton?.addEventListener('click', toggleHandTracking);
 
 function handleVoiceCommand(cmd) {
   const target = state.selected || world.getDefaultTarget();
@@ -145,12 +162,21 @@ function setMode(mode) {
 
 function toggleVoice(on) {
   state.voiceActive = on;
-  if (on) voice.start();
-  else voice.stop();
+  if (on) {
+    const started = voice.start();
+    if (!started) state.voiceActive = false;
+    ui?.setVoiceActive(state.voiceActive);
+  } else {
+    voice.stop();
+    ui?.setVoiceActive(false);
+  }
 }
 
 function resetScene() {
   handTracker.stop();
+  handButton?.classList.remove('active');
+  handButton?.setAttribute('aria-pressed', 'false');
+  if (handButton) handButton.textContent = 'Hand tracking';
   pointer.release();
   world.reset();
   physics.reset();

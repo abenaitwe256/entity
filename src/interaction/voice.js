@@ -5,83 +5,113 @@ export class VoiceController {
     this.recognition = null;
     this.active = false;
     this.supported = false;
+    this.restartTimer = null;
     this._init();
   }
 
   _init() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
       this.supported = false;
       return;
     }
+
     this.supported = true;
-    const rec = new SR();
-    rec.lang = 'en-US';
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
 
-    rec.onresult = (event) => {
+    recognition.onstart = () => this.onStatus('Listening • say grow, shrink, spin, jump or reset');
+    recognition.onresult = (event) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        if (!res.isFinal) continue;
-        const transcript = (res[0]?.transcript || '').trim().toLowerCase();
+        const result = event.results[i];
+        const transcript = (result[0]?.transcript || '').trim().toLowerCase();
         if (!transcript) continue;
-        const cmd = this._parse(transcript);
-        this.onCommand(cmd);
-      }
-    };
-    rec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        this.onStatus('Microphone permission denied for voice');
-        this.active = false;
-      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
-        console.warn('Speech recognition error', e.error);
-      }
-    };
-    rec.onend = () => {
-      if (this.active) {
-        try { rec.start(); } catch (_) {}
+
+        if (!result.isFinal) {
+          this.onStatus('Hearing: ' + transcript);
+          continue;
+        }
+
+        const command = this._parse(transcript);
+        this.onStatus(command.type === 'unknown'
+          ? 'Heard: "' + transcript + '" • command not recognised'
+          : 'Command: ' + command.type);
+        this.onCommand(command);
       }
     };
 
-    this.recognition = rec;
+    recognition.onerror = (event) => {
+      const messages = {
+        'not-allowed': 'Microphone permission denied. Allow microphone access for this site.',
+        'service-not-allowed': 'Speech recognition is blocked by the browser.',
+        'audio-capture': 'No working microphone was found.',
+        'network': 'Voice recognition needs an internet connection on this browser.',
+        'no-speech': 'No speech heard • try speaking closer to the microphone.'
+      };
+      if (messages[event.error]) this.onStatus(messages[event.error]);
+      else if (event.error !== 'aborted') console.warn('Speech recognition error:', event.error);
+
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
+        this.active = false;
+      }
+    };
+
+    recognition.onend = () => {
+      if (!this.active) return;
+      clearTimeout(this.restartTimer);
+      this.restartTimer = setTimeout(() => {
+        if (!this.active) return;
+        try { recognition.start(); }
+        catch (error) { console.warn('Voice restart failed:', error); }
+      }, 400);
+    };
+
+    this.recognition = recognition;
   }
 
-  _parse(text) {
-    const raw = text;
-    const has = (...words) => words.some(w => text.includes(w));
+  _parse(transcript) {
+    const text = transcript.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+    const has = (...phrases) => phrases.some((phrase) => text.includes(phrase));
     let type = 'unknown';
-    if (has('grow', 'bigger', 'larger', 'increase', 'expand')) type = 'grow';
-    else if (has('shrink', 'smaller', 'decrease')) type = 'shrink';
-    else if (has('spin', 'rotate', 'turn')) type = 'spin';
+
+    if (has('grow', 'bigger', 'make it big', 'larger', 'increase', 'expand')) type = 'grow';
+    else if (has('shrink', 'smaller', 'make it small', 'decrease', 'reduce')) type = 'shrink';
+    else if (has('spin', 'rotate', 'turn around')) type = 'spin';
     else if (has('jump', 'hop', 'bounce')) type = 'jump';
-    else if (has('reset', 'restart', 'clear')) type = 'reset';
-    else if (has('planet', 'world', 'globe')) type = 'selectPlanet';
-    else if (has('creature', 'animal', 'pet', 'fox', 'dog', 'cat')) type = 'selectCreature';
-    else if (has('come here', 'come', 'here', 'closer', 'to me')) type = 'comeHere';
-    return { type, raw };
+    else if (has('reset', 'restart', 'start again', 'clear scene')) type = 'reset';
+    else if (has('planet', 'world', 'globe', 'select planet')) type = 'selectPlanet';
+    else if (has('creature', 'animal', 'pet', 'fox', 'dog', 'cat', 'select creature')) type = 'selectCreature';
+    else if (has('come here', 'come closer', 'bring it here', 'move closer', 'to me')) type = 'comeHere';
+
+    return { type, raw: transcript };
   }
 
   start() {
     if (!this.supported) {
-      this.onStatus('Voice not supported in this browser (try Chrome/Edge)');
+      this.onStatus('Voice recognition is not supported in this browser. Try Chrome on Android.');
       return false;
     }
     if (this.active) return true;
+
+    clearTimeout(this.restartTimer);
+    this.active = true;
     try {
       this.recognition.start();
-      this.active = true;
-      this.onStatus('Listening for voice commands…');
       return true;
-    } catch (e) {
-      console.warn('Voice start failed', e);
+    } catch (error) {
+      this.active = false;
+      console.warn('Voice start failed:', error);
+      this.onStatus('Could not start voice recognition. Tap Voice and allow microphone access.');
       return false;
     }
   }
 
   stop() {
     this.active = false;
+    clearTimeout(this.restartTimer);
     if (this.recognition) {
       try { this.recognition.stop(); } catch (_) {}
     }
@@ -89,7 +119,10 @@ export class VoiceController {
   }
 
   toggle() {
-    if (this.active) { this.stop(); return false; }
+    if (this.active) {
+      this.stop();
+      return false;
+    }
     return this.start();
   }
 }
