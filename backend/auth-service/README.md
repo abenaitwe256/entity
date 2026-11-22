@@ -9,7 +9,7 @@ This is the first backend foundation called for in the product blueprint. It is 
 - Rank, division membership, explicit resource shares, time-bounded task assignments, risk checks, and separate approval records in the authorization decision.
 - Privileged-account MFA checks and fresh MFA (`auth_time`) checks for approve, execute, administer, and revoke actions.
 - API-token session tracking and revocation. Only a SHA-256 digest of the token's OIDC `jti` is stored; the bearer value is never stored. Suspending an account immediately blocks future requests, including still-valid JWTs.
-- Append-only HMAC-linked audit events. Keep the HMAC key in a secret manager separate from the database.
+- HMAC-linked audit event chain with an Owner verification endpoint. Keep the HMAC key in a secret manager separate from the database.
 
 No sensitive device, health, financial, or real-world operation endpoint is exposed by this initial service. `POST /v1/access/check` is the policy interface that future backend capabilities must call server-side; a client-side check is never an authorization boundary.
 
@@ -47,7 +47,7 @@ Only the one-time bootstrap command creates Rank 0, and it refuses to run when a
 
 - This is an implementation start, not a claim that the blueprint's access-control requirements are fully complete or production-certified.
 - Provider-specific MFA claim mapping and exact `iss`/`aud`/JWKS behavior must be verified against the selected OIDC provider before deployment. The default accepted `amr` values are configurable.
-- Database schema evolution, rate limiting, alerting, secret rotation, formal recovery drills, device trust, delegated administrator scopes, and an Owner console remain to be built. Until device trust is integrated, sessions are API-token sessions and do not prove a trusted device.
+- Database schema evolution, rate limiting, alerting, secret rotation, formal recovery drills, device trust, delegated administrator scopes, independent audit checkpoints/WORM retention, and an Owner console remain to be built. The current HMAC chain detects edits and interior deletions, but cannot detect deletion of the newest tail without an external checkpoint. Until device trust is integrated, sessions are API-token sessions and do not prove a trusted device.
 - `create_all` is used only by the one-time bootstrap. Production upgrades need reviewed migrations and backups.
 - The service intentionally requires PostgreSQL; SQLite is not suitable for concurrent security decisions, session revocation, or the serialized audit chain.
 

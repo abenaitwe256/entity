@@ -12,6 +12,7 @@ from entity_auth.policy import AccessRequest, authorize
 def add_user(db: Session, subject: str, rank: int, division: str | None = None, active: bool = True) -> User:
     user = User(subject=subject, rank=rank, active=active)
     db.add(user)
+    db.flush()
     if division:
         db.add(DivisionMembership(subject=subject, division=division))
     db.flush()

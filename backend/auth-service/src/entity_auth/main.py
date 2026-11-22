@@ -244,6 +244,7 @@ def provision_user(
         raise HTTPException(status_code=409, detail="Identity already provisioned")
     user = User(subject=body.subject, rank=body.rank, active=True, created_by=principal.user.subject)
     db.add(user)
+    db.flush()
     for division in sorted(set(body.divisions)):
         from entity_auth.db import DivisionMembership
         db.add(DivisionMembership(subject=body.subject, division=division, assigned_by=principal.user.subject))
