@@ -1,5 +1,5 @@
 {
-  "name": "holo-miniature-world",
+  "name": "entity",
   "version": "0.1.0",
   "description": "Open-source XR social platform prototype: interact with miniature virtual worlds via touch, voice, and holographic/phone presentation.",
   "license": "MIT",
