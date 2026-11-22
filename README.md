@@ -1,6 +1,6 @@
 # ENTITY (Prototype)
 
-> Formerly **Holo Miniature World**. The product vision, divisions, roadmap and access-control model are in [`docs/ENTITY_PRODUCT_BLUEPRINT.md`](docs/ENTITY_PRODUCT_BLUEPRINT.md). This repository currently contains the early XR prototype only.
+> Formerly **Holo Miniature World**. The product vision, divisions, roadmap and access-control model are in [`docs/ENTITY_PRODUCT_BLUEPRINT.md`](docs/ENTITY_PRODUCT_BLUEPRINT.md). The repository contains an early XR prototype and a separate identity/authorization service foundation. The browser prototype is not yet connected to that service.
 
 Open-source prototype for a realtime XR/social interface where users physically interact with virtual miniature worlds, planets, and creatures.
 
@@ -82,9 +82,15 @@ The software renders four views; physical pyramid dimensions and calibration aff
 │  ├─ audio/          # spatial audio hooks
 │  └─ ui/             # HUD/controls
 ├─ assets/            # models, textures (placeholders)
+├─ backend/
+│  └─ auth-service/   # OIDC identity and server-side authorization foundation
 ├─ docs/              # design notes
 └─ hologram/          # (planned) pyramid templates/calibration
 ```
+
+## Authentication service foundation
+
+The standalone Python API under [`backend/auth-service`](backend/auth-service/README.md) verifies OIDC access tokens and provides server-side account, session, task, approval, and access-policy foundations. It is not wired into the browser prototype; do not treat the prototype UI as authenticated. The service requires a configured identity provider and PostgreSQL before use.
 
 ## Hand tracking setup
 

@@ -11,6 +11,8 @@ src/
   audio/             # audio feedback + (future) spatialization/listener sync
   hologram/          # Pepper's Ghost 4-quadrant renderer
   ui/                # HUD controls and state toggles
+backend/
+  auth-service/      # separate Python OIDC identity and authorization API
 ```
 
 ## Runtime data flow
@@ -50,3 +52,10 @@ src/
 - **Voice**: Web Speech API now; Whisper.cpp / Vosk for offline
 - **Networking/voice**: WebRTC, Yjs, LiveKit components as needed
 - **Hologram optics**: Pepper's Ghost (screen + pyramid) and optional OST headsets (e.g. HoloKit-style) driven by the same scene
+
+
+## Identity and authorization foundation
+
+`backend/auth-service/` is a separate backend service, not part of the static XR client runtime. It validates provider-issued JWT access tokens, resolves provisioned identities from PostgreSQL, tracks and revokes API-token sessions, and evaluates server-side rank, division, task, resource, risk, and approval context. The provider remains responsible for passwords, MFA enrollment, trusted-device policy, and owner account recovery.
+
+The current browser prototype remains single-user and has no account or token flow. Sensitive product handlers must call the server-side policy using resource classification and risk values loaded from trusted backend state. A client-supplied policy check is not an authorization boundary. The service must be configured and tested before any sensitive division or real-world control is exposed.
