@@ -138,6 +138,13 @@ No API keys, credentials, or private health data should be committed to the repo
 - Connect voice, intelligence, AR, projection, scientific tools, and device actions into one experience.
 - Run end-to-end reliability, security, accessibility, and device-compatibility testing.
 
+### Phase 7 — ENTITY Autonomous Operations, Robotics, and Cosmic Research
+- Implement permission-scoped task planning, policy checks, execution verification, audit trails, and human approval gates.
+- Integrate simulated robotics first, then compatible physical platforms in controlled test environments.
+- Add safe robotics adapters, emergency-stop behavior, hardware health checks, and operator handoff.
+- Integrate astronomy archives, telescope/scientific datasets, and authorized mission telemetry with provenance and uncertainty.
+- Build cosmic-scale visualization and modelling workflows while documenting observational and physical limits.
+
 ## Current repository baseline
 
 The existing repository is an early Three.js/Cannon-es prototype with pointer/touch interaction, browser voice hooks, MediaPipe hand tracking, camera passthrough, and a Pepper's Ghost display mode.
