@@ -1,6 +1,6 @@
 # Concept & Design Notes
 
-This project prototypes a **realtime holographic/XR social interface** where users physically interact with virtual miniature worlds, planets, and creatures.
+ENTITY (formerly Holo Miniature World) prototypes a **realtime holographic/XR social interface** where users physically interact with virtual miniature worlds, planets, and creatures.
 
 ## Core principles
 
