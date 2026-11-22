@@ -4,6 +4,14 @@
 **Tagline:** Intelligence Beyond Boundaries.  
 **Product type:** AI intelligence platform + Android companion + augmented reality + interactive 3D environment.
 
+
+## Official visual identity
+
+- **Primary brand name:** ENTITY
+- **Primary logo:** retain the futuristic geometric AI symbol selected from the original HOLO concept; replace the HOLO wordmark with ENTITY.
+- **Logo usage:** this is the canonical primary mark for the Android app icon, website, splash/loading screen, AR interface, and ecosystem materials.
+- **Consistency:** do not substitute a different symbol or redesign the core mark across modules. Variations may adapt sizing, contrast, or background for legibility while preserving the same recognizable symbol.
+
 ENTITY is intended to become one connected ecosystem. The stages below are an implementation sequence, not a reduction of the final vision.
 
 ## Product principles
