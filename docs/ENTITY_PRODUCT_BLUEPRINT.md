@@ -185,3 +185,48 @@ A feature is not complete merely because a button or screen exists. Each capabil
 - Performance and accessibility checks appropriate to target devices.
 - Security and privacy review for sensitive capabilities.
 - Documentation of limitations and supported devices.
+
+
+## ENTITY user ranks, access levels, and operational assignments
+
+ENTITY uses an owner-governed, rank-based access-control system. Every human account must be explicitly authorized by the ENTITY Owner before access is granted. Rank defines the maximum authority a person may hold; actual permissions are further limited by division, assigned task, data classification, device/session trust, and risk policy. No rank automatically grants unrestricted access to every division or dataset.
+
+### Authority hierarchy
+
+| Rank | Role | Default authority and responsibility |
+|---|---|---|
+| **Rank 0 — OWNER** | ENTITY Owner (founder) | Sole root authority. Approves all user access, appoints/removes administrators and division directors, defines global policies, grants exceptional permissions, and can suspend any account or operation. |
+| **Rank 1 — EXECUTIVE ADMINISTRATOR** | Owner-appointed senior administrator | Manages approved accounts, access requests, operational coordination, and platform administration within explicitly delegated limits. Cannot transfer ownership, override owner-only controls, or grant themselves higher privileges. |
+| **Rank 2 — DIVISION DIRECTOR** | One director for an assigned ENTITY division | Leads only their assigned division, assigns its approved work, manages its team within delegated limits, and reports progress and risks to the Owner/authorized executive administrator. |
+| **Rank 3 — DIVISION LEAD / SENIOR SPECIALIST** | Technical or operational lead | Supervises a defined team or specialist function, reviews work, and coordinates assigned tasks within the division and permissions granted. |
+| **Rank 4 — OPERATOR / SPECIALIST** | Authorized task performer | Executes specific approved operational, technical, research, or device tasks. Access is limited to the tools, data, systems, and operations required for the assignment. |
+| **Rank 5 — ANALYST / RESEARCHER** | Research and analysis contributor | Reads permitted datasets, performs approved analysis, prepares reports and recommendations, and cannot execute restricted operational actions unless separately authorized. |
+| **Rank 6 — VIEWER / GUEST** | Limited-access user | Views only explicitly shared content or outputs. No administrative privileges and no access to restricted systems or private user data. |
+
+### Individual task ownership
+
+- Every operational task must have a named accountable person or approved service identity, a responsible division, a task description, permitted tools/data, scope, risk level, deadline or review point, and a defined completion condition.
+- Use a task-assignment record with: task ID, assignee, assigning authority, division, required rank/permissions, resources, start/end time, approval state, execution status, evidence/output, and audit history.
+- A person may hold different task permissions in different divisions, but only when explicitly authorized. Membership in one division does not imply access to another.
+- Delegation must be explicit, scoped, and revocable. Temporary elevated access should expire automatically. Users cannot approve their own privilege escalation.
+- High-impact, irreversible, safety-critical, medical, financial, biological, cyber, physical-device, robotics, or spacecraft actions require the appropriate additional approval gates regardless of rank. Rank does not bypass risk-based human approval.
+- Automated agents and background services must use separate non-human identities with narrowly scoped credentials, explicit task permissions, execution limits, monitoring, and revocation. They do not inherit a human user's full rank.
+
+### Access-control enforcement
+
+- Implement role-based access control (RBAC) combined with attribute/task-based checks (ABAC): rank, division, task assignment, resource classification, action, environment, and risk must all be evaluated before access or execution.
+- Apply least privilege and deny by default. Check authorization on the server for every protected operation; hiding a button in the interface is not security.
+- Separate read, create, modify, approve, execute, administer, and revoke permissions. Sensitive operations should use separation of duties where practical.
+- Require secure authentication, multi-factor authentication for owner and privileged accounts, session/device controls, protected recovery, and step-up authentication for critical actions.
+- Maintain tamper-evident audit records for access grants, denials, role changes, task assignment, approvals, data access, exports, and operational actions.
+- Provide the Owner with an access-control console showing users, ranks, divisions, assigned tasks, active sessions, approvals, exceptions, and audit history.
+- Support immediate suspension, credential/session revocation, emergency lockdown, and documented recovery procedures.
+- Never store passwords or API secrets in source code or grant access through shared accounts.
+
+### Ownership and governance rule
+
+The ENTITY Owner remains the final authority over who joins ENTITY and who may hold each rank. Executive administrators and division leaders may recommend candidates or request access changes, but may only approve or perform changes that the Owner has explicitly delegated. Ownership cannot be transferred or overridden by another user, division, or autonomous agent.
+
+### Implementation requirement
+
+This access model is a required platform foundation, not merely a documented interface. Implement the identity and authorization service before exposing sensitive divisions or real-world controls. Add automated tests for privilege escalation, cross-division access, expired assignments, revoked users, self-approval, unauthorized execution, and owner-account recovery. Until enforcement is implemented and tested, the system must not claim that rank-based access control is active.
