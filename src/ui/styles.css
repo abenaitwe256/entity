@@ -131,3 +131,32 @@ body.hologram .hud-help {
   .hud-help { font-size: 11px; }
   .hud-controls button { padding: 7px 10px; font-size: 12px; }
 }
+
+
+/* Third-person mobile game controls */
+#mobile-controls {
+  position: fixed; inset: auto 0 18px 0; z-index: 4;
+  display: flex; align-items: end; justify-content: space-between;
+  padding: 0 22px; pointer-events: none;
+}
+#move-stick {
+  width: 118px; height: 118px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.42);
+  background: rgba(8,15,24,.34); backdrop-filter: blur(5px);
+  touch-action: none; pointer-events: auto; display: grid; place-items: center;
+}
+#stick-knob {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: rgba(230,242,255,.72); border: 1px solid rgba(255,255,255,.8);
+  box-shadow: 0 4px 18px rgba(0,0,0,.25); pointer-events: none;
+}
+#run-button {
+  width: 72px; height: 72px; border-radius: 50%; border: 2px solid rgba(255,255,255,.55);
+  background: rgba(22,44,67,.7); color: white; font-weight: 800; letter-spacing: .08em;
+  pointer-events: auto; touch-action: none; margin: 0 4px 10px 0;
+}
+@media (hover:hover) and (pointer:fine) { #mobile-controls { opacity: .45; } }
+@media (max-width:640px) {
+  #mobile-controls { bottom: max(14px, env(safe-area-inset-bottom)); }
+  #move-stick { width: 108px; height: 108px; }
+}
