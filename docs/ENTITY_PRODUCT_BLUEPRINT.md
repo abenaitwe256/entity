@@ -88,6 +88,29 @@ A phone camera alone cannot reveal all internal biological events in real time. 
 - Scale rendering quality, shadows, assets, and simulation load for mobile hardware.
 - Future extensions may include vehicles, traffic, missions, interiors, and larger streamed environments.
 
+
+## ENTITY division structure
+
+ENTITY is organized into eight interconnected divisions coordinated by one central intelligence. Each division owns a specialist responsibility while sharing permissioned tools, context, data provenance, and safety policies.
+
+| Division | Primary responsibility |
+|---|---|
+| **ENTITY MIND** | Intelligence, reasoning, knowledge, planning, memory, research coordination, and communication. |
+| **ENTITY REALITY** | Augmented reality, immersive 3D worlds, spatial computing, digital characters, projection, and human interaction. |
+| **ENTITY HUMAN** | Human biology, medicine, genetics, physiology, neuroscience, neural technology, and consent-based health intelligence. |
+| **ENTITY SCIENCE** | Physics, mathematics, chemistry, astronomy, scientific research, modelling, and reproducible simulations. |
+| **ENTITY ENGINEERING** | Inventions, aerospace and general engineering, robotics, automation, materials science, and prototype development. |
+| **ENTITY SPACE** | Satellites, spacecraft, orbital systems, space missions, astronomy data, and authorized space-system interaction. |
+| **ENTITY PLANET** | Earth intelligence, global sensing, environmental monitoring, geospatial data, climate, oceans, and disaster intelligence. |
+| **ENTITY FUTURE** | Prediction, discovery, scenario modelling, autonomous innovation, and long-term technology exploration. |
+
+### Division coordination
+- ENTITY MIND acts as the central orchestration and user-interaction layer; it does not replace specialist expertise.
+- Divisions collaborate on cross-disciplinary tasks. For example, ENTITY SPACE and ENTITY ENGINEERING can jointly develop a spacecraft concept, while ENTITY PLANET and ENTITY SCIENCE analyze Earth-observation data.
+- Shared services provide identity, permissions, memory, audit logs, data provenance, research tools, simulation, and safety checks.
+- A division may recommend or prepare an action, but real-world execution remains subject to the platform's autonomy policy, user permissions, and risk-based approval requirements.
+- The division structure is modular: new divisions and specialist capabilities may be added without redesigning the entire system.
+
 ## Proposed technical architecture
 
 - **Android application layer:** Kotlin/Jetpack Compose or an equivalent maintained native Android stack for permissions, foreground voice service, Bluetooth, intents, MediaProjection, lifecycle, and device integrations.
