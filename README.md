@@ -1,4 +1,6 @@
-# Holo Miniature World (Prototype)
+# ENTITY (Prototype)
+
+> Formerly **Holo Miniature World**. The product vision, divisions, roadmap and access-control model are in [`docs/ENTITY_PRODUCT_BLUEPRINT.md`](docs/ENTITY_PRODUCT_BLUEPRINT.md). This repository currently contains the early XR prototype only.
 
 Open-source prototype for a realtime XR/social interface where users physically interact with virtual miniature worlds, planets, and creatures.
 
