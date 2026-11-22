@@ -1,4 +1,4 @@
-name: Deploy Holo Miniature World to GitHub Pages
+name: Deploy ENTITY to GitHub Pages
 
 on:
   push:
