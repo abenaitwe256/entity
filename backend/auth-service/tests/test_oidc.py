@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 
 import jwt
 import pytest
@@ -50,8 +51,28 @@ def test_valid_access_token_is_verified_and_jti_is_hashed(signing_key):
     {"aud": "different-api"},
     {"exp": datetime.now(timezone.utc) - timedelta(minutes=1)},
     {"sub": ""},
+    {"jti": 123},
 ])
 def test_invalid_issuer_audience_expiry_or_subject_is_rejected(signing_key, overrides):
     token = jwt.encode(claims(**overrides), signing_key, algorithm="RS256", headers={"kid": "test"})
     with pytest.raises(jwt.PyJWTError):
         oidc.verify_bearer(token)
+
+
+
+def test_token_hash_is_scoped_to_issuer_and_subject(signing_key):
+    first = jwt.encode(
+        claims(sub="first-sub", jti="same-jti"), signing_key, algorithm="RS256",
+        headers={"kid": "test"},
+    )
+    second = jwt.encode(
+        claims(sub="second-sub", jti="same-jti"), signing_key, algorithm="RS256",
+        headers={"kid": "test"},
+    )
+    first_hash = oidc.verify_bearer(first).token_hash
+    second_hash = oidc.verify_bearer(second).token_hash
+    expected = sha256(
+        "https://identity.test.invalid/\0first-sub\0same-jti".encode("utf-8")
+    ).hexdigest()
+    assert first_hash == expected
+    assert first_hash != second_hash

@@ -90,7 +90,7 @@ def _has_approval(db: Session, subject: str, request: AccessRequest, now: dateti
     approval = db.get(ActionApproval, request.approval_id)
     if not approval:
         return False
-    approver = db.get(User, approval.approver) if approval.approver else None
+    approver = db.scalar(select(User).where(User.subject == approval.approver)) if approval.approver else None
     return bool(
         approval.status == "approved"
         and approval.requester == subject
@@ -143,6 +143,9 @@ def authorize(
     # Guest access is always explicit and resource-specific.
     if user.rank == 6:
         if request.action == "read" and request.classification == "public" and shared:
+            if (require_independent_approval and request.risk in {"high", "critical"}
+                    and not _has_approval(db, user.subject, request, now)):
+                return Decision(False, "independent_approval_required")
             return Decision(True, "explicit_public_share")
         return Decision(False, "explicit_share_required")
 
@@ -165,7 +168,7 @@ def authorize(
         baseline = owner and task is not None
     if not owner and not baseline and not shared:
         return Decision(False, "rank_or_assignment_insufficient")
-    if require_independent_approval and request.risk in {"high", "critical"} and request.action in {"execute", "approve"}:
+    if require_independent_approval and request.risk in {"high", "critical"}:
         if not _has_approval(db, user.subject, request, now):
             return Decision(False, "independent_approval_required")
     return Decision(True, "owner_authority" if owner else "authorized")

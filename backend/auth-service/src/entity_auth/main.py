@@ -89,7 +89,8 @@ def current_principal(
     ).on_conflict_do_nothing(index_elements=["token_hash"])
     insert_result = db.execute(stmt)
     token_session = db.scalar(select(TokenSession).where(TokenSession.token_hash == verified.token_hash))
-    if not token_session or token_session.revoked_at or token_session.expires_at <= now:
+    if (not token_session or token_session.subject != subject
+            or token_session.revoked_at or token_session.expires_at <= now):
         raise HTTPException(status_code=401, detail="Session revoked or expired", headers={"WWW-Authenticate": "Bearer"})
     db.execute(update(TokenSession).where(TokenSession.id == token_session.id).values(last_seen_at=now))
     if insert_result.rowcount == 1:
@@ -348,6 +349,7 @@ def assign_task(
         assigned_by=principal.user.subject,
     )
     db.add(task)
+    db.flush()  # Materialize the generated ID before correlating it in the audit event.
     append_audit(db, principal.user.subject, "task.assigned", "success", {
         "task_id": task.id, "subject": body.subject, "division": body.division,
         "permissions": sorted(set(body.permissions)), "expires_at": body.expires_at.isoformat(),
@@ -371,18 +373,34 @@ def share_resource(
         raise HTTPException(status_code=422, detail="Explicit resource shares are read-only")
     if body.expires_at and (body.expires_at.tzinfo is None or body.expires_at <= utcnow()):
         raise HTTPException(status_code=422, detail="Share expiry must be a future timezone-aware timestamp")
-    grant = SharedResourceGrant(
-        subject=body.subject, resource_type=body.resource_type, resource_id=body.resource_id,
-        permission=body.permission, granted_by=principal.user.subject, expires_at=body.expires_at,
+    grant_id = db.scalar(
+        insert(SharedResourceGrant)
+        .values(
+            id=str(uuid4()), subject=body.subject, resource_type=body.resource_type,
+            resource_id=body.resource_id, permission=body.permission,
+            granted_by=principal.user.subject, expires_at=body.expires_at, revoked_at=None,
+        )
+        .on_conflict_do_update(
+            index_elements=[
+                SharedResourceGrant.subject, SharedResourceGrant.resource_type,
+                SharedResourceGrant.resource_id, SharedResourceGrant.permission,
+            ],
+            set_={
+                "granted_by": principal.user.subject,
+                "expires_at": body.expires_at,
+                "revoked_at": None,
+            },
+        )
+        .returning(SharedResourceGrant.id)
     )
-    db.add(grant)
     append_audit(db, principal.user.subject, "resource.shared", "success", {
+        "share_id": grant_id,
         "subject": body.subject, "resource_type": body.resource_type,
         "resource_id": body.resource_id, "permission": body.permission,
         "expires_at": body.expires_at.isoformat() if body.expires_at else None,
     })
     db.commit()
-    return {"share_id": grant.id, "subject": grant.subject, "permission": grant.permission}
+    return {"share_id": grant_id, "subject": body.subject, "permission": body.permission}
 
 
 @app.post("/v1/admin/tasks/{task_id}/revoke", status_code=204)
@@ -421,8 +439,8 @@ def request_approval(
     principal: Annotated[Principal, Depends(current_principal)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    if body.division not in DIVISIONS or body.action not in {"execute", "approve"} or body.risk not in {"high", "critical"}:
-        raise HTTPException(status_code=422, detail="Approval requests are for high-risk execution or approval actions")
+    if body.division not in DIVISIONS or body.action not in PERMISSIONS or body.risk not in {"high", "critical"}:
+        raise HTTPException(status_code=422, detail="Approval requests require a valid high-risk action")
     if principal.user.rank == 0:
         raise HTTPException(status_code=403, detail="Owner cannot request an approval for their own action")
     if principal.user.rank > 4:
@@ -443,6 +461,7 @@ def request_approval(
         expires_at=utcnow() + timedelta(hours=8),
     )
     db.add(approval)
+    db.flush()  # Materialize the generated ID before correlating it in the audit event.
     append_audit(db, principal.user.subject, "approval.requested", "pending", {
         "approval_id": approval.id, "division": body.division, "action": body.action,
         "resource_type": body.resource_type, "resource_id": body.resource_id,

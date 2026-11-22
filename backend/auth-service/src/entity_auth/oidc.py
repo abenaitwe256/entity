@@ -41,4 +41,8 @@ def verify_bearer(token: str) -> VerifiedToken:
     )
     if not isinstance(claims.get("sub"), str) or not claims["sub"]:
         raise jwt.InvalidTokenError("Missing subject")
-    return VerifiedToken(claims=claims, token_hash=sha256(claims["jti"].encode("utf-8")).hexdigest())
+    jti = claims.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise jwt.InvalidTokenError("Missing or invalid token ID")
+    token_identity = f"{settings.oidc_issuer}\0{claims['sub']}\0{jti}"
+    return VerifiedToken(claims=claims, token_hash=sha256(token_identity.encode("utf-8")).hexdigest())
