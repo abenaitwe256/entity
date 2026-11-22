@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
+  <title id="title">ENTITY — Intelligence Beyond Boundaries</title>
+  <desc id="desc">A luminous geometric orbital emblem surrounding a glowing blue planet, above the ENTITY wordmark.</desc>
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff"/><stop offset=".38" stop-color="#b8d9ff"/><stop offset=".7" stop-color="#537da9"/><stop offset="1" stop-color="#eefaff"/></linearGradient>
+    <radialGradient id="space"><stop stop-color="#102e5b"/><stop offset=".72" stop-color="#030b1b"/><stop offset="1" stop-color="#01040b"/></radialGradient>
+    <radialGradient id="planet" cx=".35" cy=".28"><stop stop-color="#b9f4ff"/><stop offset=".25" stop-color="#278fff"/><stop offset=".7" stop-color="#0750a8"/><stop offset="1" stop-color="#02132e"/></radialGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1200" height="900" rx="52" fill="url(#space)"/>
+  <g fill="none" stroke="#16cfff" filter="url(#glow)" opacity=".9">
+    <ellipse cx="600" cy="355" rx="410" ry="120" transform="rotate(-18 600 355)" stroke-width="5"/>
+    <ellipse cx="600" cy="355" rx="410" ry="120" transform="rotate(18 600 355)" stroke-width="3" opacity=".75"/>
+    <path d="M600 70V650" stroke-width="2" opacity=".65"/>
+  </g>
+  <path d="M600 90 930 590H270Z" fill="#07152a" stroke="url(#metal)" stroke-width="24" stroke-linejoin="round"/>
+  <path d="M600 90 930 590H270Z" fill="none" stroke="#00cfff" stroke-width="5" filter="url(#glow)"/>
+  <circle cx="600" cy="355" r="125" fill="url(#planet)" stroke="#9beeff" stroke-width="8" filter="url(#glow)"/>
+  <path d="M520 290q25-35 52-10l18 24-18 20-35-4-17 25-24-8 8-28Zm115-15 28 15-8 30-25 8-18-22Zm-92 112 32-15 35 15 12 31-28 32-36-12-20-26Z" fill="#7be1b5" opacity=".65"/>
+  <path d="M475 355q125-85 250 0M490 410q110 75 220 0" fill="none" stroke="#b8f6ff" stroke-width="3" opacity=".6"/>
+  <text x="600" y="745" text-anchor="middle" fill="url(#metal)" font-family="Arial, Helvetica, sans-serif" font-size="128" font-weight="700" letter-spacing="14">ENTITY</text>
+  <path d="M220 785H980" stroke="#00cfff" stroke-width="3" opacity=".8"/>
+  <text x="600" y="835" text-anchor="middle" fill="#8beaff" font-family="Arial, Helvetica, sans-serif" font-size="34" letter-spacing="2">INTELLIGENCE BEYOND BOUNDARIES</text>
+</svg>
