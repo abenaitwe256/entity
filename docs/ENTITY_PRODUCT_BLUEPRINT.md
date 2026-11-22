@@ -95,6 +95,7 @@ A phone camera alone cannot reveal all internal biological events in real time. 
 - **AI backend:** secure API service for central orchestration, specialist routing, tool access, retrieval, and permission-scoped memory.
 - **Scientific compute:** isolated, testable computation services for numerical work and simulations; use established domain libraries where possible.
 - **Data layer:** secure database and object storage with explicit access controls, auditability, retention rules, and encryption.
+- **Global telemetry layer:** geospatial/time-series ingestion, satellite and scientific data connectors, sensor/API adapters, provenance metadata, stream processing, alerting, and role-based access controls.
 - **Client interface:** modular mobile-first UI with clear states for voice, AR, projection, research, and device permissions.
 
 No API keys, credentials, or private health data should be committed to the repository.
@@ -129,7 +130,8 @@ No API keys, credentials, or private health data should be committed to the repo
 ### Phase 5 — ENTITY Scientific Lab and Human Intelligence
 - Reproducible scientific tools and engineering workflows.
 - Compatible wearable/device integrations and consented health-data ingestion.
-- Biological visualizations, trends, provenance, and safety review.
+- Global sensing connectors, geospatial/time-series processing, source-quality checks, and live telemetry dashboards.
+- Biological and Earth/space visualizations, trends, provenance, and safety review.
 
 ### Phase 6 — ENTITY World and ecosystem integration
 - Expand the original 3D world, physics, characters, and mobile performance.
