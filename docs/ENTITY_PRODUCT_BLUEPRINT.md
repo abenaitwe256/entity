@@ -66,12 +66,23 @@ Protected media and secure app screens may block capture. Ordinary phones displa
 
 A phone camera alone cannot reveal all internal biological events in real time. Biological monitoring depends on validated compatible sensors and data sources.
 
-### 8. ENTITY Scientific Lab
+### 8. ENTITY Global Sensing and Telemetry
+- A global sensing and measurement capability that combines authorized satellite observations, Earth-observation products, weather and environmental stations, ocean and seismic networks, GNSS measurements, scientific instruments, IoT devices, and openly available digital telemetry.
+- Observe and analyse measurable phenomena across Earth, near-Earth space, deep space, and connected digital infrastructure: location and movement where lawfully available, temperature, pressure, humidity, air and water quality, radiation, magnetic fields, seismic activity, ocean conditions, atmospheric composition, land use, vegetation, fires, storms, space weather, satellite status, orbital objects, network health, and other instrument-specific signals.
+- Build a unified geospatial and temporal data layer with maps, timelines, live dashboards, alerts, historical comparisons, forecasts, and 3D globe/space visualizations.
+- Fuse multiple data sources while preserving source attribution, timestamp, geographic coverage, resolution, calibration, uncertainty, update frequency, and confidence.
+- Distinguish direct sensor measurements from satellite-derived estimates, model outputs, forecasts, interpolations, and AI-generated interpretations.
+- Support user-connected sensors and approved APIs, public scientific datasets, licensed commercial feeds, and partner networks. Respect authentication, terms of use, privacy, cybersecurity, export controls, and local laws.
+- Provide alerts and anomaly detection for events such as severe weather, environmental hazards, infrastructure changes, and space-weather disturbances, with human verification for consequential decisions.
+
+**Scope and limits:** This is a global telemetry and sensor-fusion ambition—not literal omniscience or guaranteed access to every sensor, network, website, or private system. ENTITY can only measure or analyse phenomena covered by available instruments and authorized data feeds. Satellite imagery has revisit, resolution, cloud-cover, latency, and licensing limits; internet telemetry is limited to systems that expose data or grant access. It must never conduct covert tracking, unauthorized network probing, or surveillance of individuals.
+
+### 9. ENTITY Scientific Lab
 - Reproducible calculations, simulations, graphs, diagrams, technical reports, 3D models, CAD-ready outputs, and bills of materials.
 - Show assumptions, equations, units, source references, validation checks, and uncertainty.
 - Engineering simulation results must be labelled as preliminary until validated against appropriate tools, standards, and physical testing.
 
-### 9. ENTITY World
+### 10. ENTITY World
 - An original high-definition interactive 3D world with believable environments, characters, physics, and interactions.
 - Build original assets and environments; do not copy protected game maps, characters, or assets.
 - Scale rendering quality, shadows, assets, and simulation load for mobile hardware.
