@@ -103,7 +103,7 @@ def access_request(*, action="read", resource_id="sample-1", task_id=None, appro
 
 
 def test_unknown_resource_is_denied_by_default():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         guest = add_user(db, "guest-sub", 6)
         decision = authorize(db, guest, {}, access_request())
         assert not decision.allowed
@@ -112,7 +112,7 @@ def test_unknown_resource_is_denied_by_default():
 
 
 def test_access_request_rejects_client_supplied_risk_classification_and_ownership():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         user = add_user(db, "guest-sub", 6)
         response = api_as(
             db, user, {}, "post", "/v1/access/check",
@@ -127,7 +127,7 @@ def test_access_request_rejects_client_supplied_risk_classification_and_ownershi
 
 
 def test_server_policy_cannot_be_downgraded_by_requester():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 3, "science")
         add_policy(db, owner, risk="critical", classification="highly_restricted")
@@ -141,7 +141,7 @@ def test_server_policy_cannot_be_downgraded_by_requester():
 
 
 def test_cross_division_membership_and_task_do_not_authorize_resource():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 4, "engineering")
         add_policy(db, owner, division="science")
@@ -197,7 +197,7 @@ def test_only_allowlisted_registry_workload_can_write_server_policy(monkeypatch)
 
 
 def test_resource_owner_authority_is_server_derived_and_exact_resource_scoped():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         resource_owner = add_user(db, "resource-owner", 4, "engineering")
         add_policy(db, resource_owner, division="science")
         own_resource = authorize(db, resource_owner, fresh_mfa(), access_request())
@@ -211,7 +211,7 @@ def test_resource_owner_authority_is_server_derived_and_exact_resource_scoped():
 
 
 def test_legacy_non_read_share_cannot_grant_write_access():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         operator = add_user(db, "operator-sub", 5)
         add_policy(db, owner, classification="public", risk="low")
@@ -233,7 +233,7 @@ def test_legacy_non_read_share_cannot_grant_write_access():
 
 
 def test_revoked_share_is_denied_and_regrant_requires_independent_approval():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         resource_owner = add_user(db, "resource-owner", 2)
@@ -279,7 +279,7 @@ def test_revoked_share_is_denied_and_regrant_requires_independent_approval():
 
 
 def test_owner_change_request_requires_owner_and_recent_mfa():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         member = add_user(db, "member-sub", 2)
         payload = {"subject": "new-user", "rank": 2, "divisions": []}
@@ -297,7 +297,7 @@ def test_owner_change_request_requires_owner_and_recent_mfa():
 
 
 def test_owner_cannot_execute_admin_mutation_without_second_approval():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         path = "/v1/admin/users?change_id=unissued"
         response = api_as(
@@ -309,7 +309,7 @@ def test_owner_cannot_execute_admin_mutation_without_second_approval():
 
 
 def test_owner_change_requires_independent_rank_one_approval_and_is_consumed_once():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         payload = {"subject": "new-user", "rank": 2, "divisions": ["science"]}
@@ -354,7 +354,7 @@ def test_owner_change_requires_independent_rank_one_approval_and_is_consumed_onc
 
 
 def test_rank_two_cannot_approve_owner_administration_change():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         rank_two = add_user(db, "rank-two-sub", 2)
@@ -382,7 +382,7 @@ def test_rank_two_cannot_approve_owner_administration_change():
 
 
 def test_repeated_task_revocation_consumes_approval_and_is_audited():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         member = add_user(db, "member-sub", 2, "science")
@@ -406,7 +406,7 @@ def test_repeated_task_revocation_consumes_approval_and_is_audited():
 
 
 def test_rank_one_affected_account_cannot_approve_its_own_change():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         requested = api_as(
@@ -426,7 +426,7 @@ def test_rank_one_affected_account_cannot_approve_its_own_change():
 
 
 def test_forged_admin_approval_without_decision_record_is_not_executable():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         payload = {"subject": "forged-user", "rank": 2, "divisions": []}
@@ -447,7 +447,7 @@ def test_forged_admin_approval_without_decision_record_is_not_executable():
 
 
 def test_admin_approval_is_bound_to_exact_payload():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         approved_payload = {"subject": "approved-user", "rank": 2, "divisions": []}
@@ -463,7 +463,7 @@ def test_admin_approval_is_bound_to_exact_payload():
 
 
 def test_non_owner_cannot_change_accounts_even_with_a_forged_change_id():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         rank_one = add_user(db, "reviewer-sub", 1)
         response = api_as(
@@ -476,7 +476,7 @@ def test_non_owner_cannot_change_accounts_even_with_a_forged_change_id():
 
 
 def test_task_and_approval_generated_ids_are_audited():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         member = add_user(db, "member-sub", 2, "science")
@@ -510,7 +510,7 @@ def test_task_and_approval_generated_ids_are_audited():
 
 
 def test_high_risk_approval_is_independent_bound_and_consumed_once():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         resource_owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 3, "science")
@@ -546,7 +546,7 @@ def test_high_risk_approval_is_independent_bound_and_consumed_once():
 
 
 def test_owner_high_risk_action_requires_fresh_mfa_task_and_rank_one_approver():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         resource_owner = add_user(db, "resource-owner", 2)
@@ -588,7 +588,7 @@ def test_owner_high_risk_action_requires_fresh_mfa_task_and_rank_one_approver():
 
 
 def test_owner_cannot_bypass_high_classification_or_irreversible_action_approval():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         resource_owner = add_user(db, "resource-owner", 2)
@@ -638,7 +638,7 @@ def test_owner_cannot_bypass_high_classification_or_irreversible_action_approval
 
 
 def test_forged_action_approval_without_fresh_independent_decision_is_denied():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         resource_owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 3, "science")
@@ -663,7 +663,7 @@ def test_forged_action_approval_without_fresh_independent_decision_is_denied():
 
 
 def test_approval_consumption_rechecks_live_task_and_resource_policy():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         resource_owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 3, "science")
@@ -698,7 +698,7 @@ def test_approval_consumption_rechecks_live_task_and_resource_policy():
 
 
 def test_resource_policy_version_change_invalidates_existing_approval():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         resource_owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 3, "science")
@@ -723,7 +723,7 @@ def test_resource_policy_version_change_invalidates_existing_approval():
 
 
 def test_approval_request_audit_id_is_stable_and_uuid_generated():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         resource_owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 3, "science")
@@ -786,7 +786,7 @@ def test_privileged_owner_cannot_authenticate_without_mfa(monkeypatch):
 
 
 def test_suspended_second_approver_invalidates_pending_high_risk_authorization():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
         resource_owner = add_user(db, "resource-owner", 2)
@@ -824,7 +824,7 @@ def test_audit_chain_detects_modified_event():
 
 
 def test_initial_bootstrap_requires_a_distinct_rank_one_reviewer_and_audits_both():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         with pytest.raises(ValueError, match="reviewer is required"):
             provision_initial_owner(db, "owner-sub")
         assert db.scalar(select(User).where(User.subject == "owner-sub")) is None
@@ -842,7 +842,7 @@ def test_initial_bootstrap_requires_a_distinct_rank_one_reviewer_and_audits_both
 
 
 def test_initial_bootstrap_refuses_same_subject_or_nonempty_user_table():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         with pytest.raises(ValueError, match="distinct"):
             provision_initial_users(db, "same-sub", "same-sub")
         assert db.scalar(select(User)) is None
@@ -852,7 +852,7 @@ def test_initial_bootstrap_refuses_same_subject_or_nonempty_user_table():
 
 
 def test_existing_owner_only_database_can_bootstrap_one_independent_reviewer():
-    with SessionLocal.begin() as db:
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         add_user(db, "member-sub", 3)
         reviewer = provision_initial_reviewer(db, owner.subject, "initial-reviewer-sub")

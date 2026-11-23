@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from entity_auth.config import get_settings
 from entity_auth.db import (
-    ActionApproval, AdminChange, AuditEvent, ResourcePolicy, SessionLocal, SharedResourceGrant,
+    ActionApproval, AdminChange, AuditEvent, DivisionMembership, ResourcePolicy, SessionLocal, SharedResourceGrant,
     TaskAssignment, TokenSession, User, utcnow,
 )
 from entity_auth.oidc import verify_bearer
