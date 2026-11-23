@@ -90,7 +90,7 @@ The software renders four views; physical pyramid dimensions and calibration aff
 
 ## Authentication service foundation
 
-The standalone Python API under [`backend/auth-service`](backend/auth-service/README.md) verifies OIDC access tokens and provides server-side account, session, task, approval, and access-policy foundations. It is not wired into the browser prototype; do not treat the prototype UI as authenticated. The service requires a configured identity provider and PostgreSQL before use.
+The standalone Python API under [backend/auth-service](backend/auth-service/README.md) now has server-derived resource policy, one-time independent approvals, Owner/Rank 1 two-person administration, revocable sessions and an Alembic migration path. Automated tests cover the main authorization boundaries. The browser remains a static prototype with no sign-in flow or authoritative product backend, so the service is **not production-ready** and the UI must not be treated as authenticated. See the [browser integration plan](docs/ENTITY_AUTH_BROWSER_INTEGRATION.md) and the service's remaining deployment blockers.
 
 ## Hand tracking setup
 

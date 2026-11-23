@@ -59,3 +59,12 @@ backend/
 `backend/auth-service/` is a separate backend service, not part of the static XR client runtime. It validates provider-issued JWT access tokens, resolves provisioned identities from PostgreSQL, tracks and revokes API-token sessions, and evaluates server-side rank, division, task, resource, risk, and approval context. The provider remains responsible for passwords, MFA enrollment, trusted-device policy, and owner account recovery.
 
 The current browser prototype remains single-user and has no account or token flow. Sensitive product handlers must call the server-side policy using resource classification and risk values loaded from trusted backend state. A client-supplied policy check is not an authorization boundary. The service must be configured and tested before any sensitive division or real-world control is exposed.
+
+
+## Authentication and authorization status
+
+The current XR code is static and does not authenticate users or call the Python auth service. The backend foundation verifies OIDC tokens, checks revocable API sessions and evaluates policy using resource metadata stored server-side. A dedicated trusted workload identity must publish that metadata; client requests cannot choose division, resource owner, classification or risk.
+
+Administrative mutations require an Owner with recent MFA, an independent Rank 1 reviewer, and exact payload-bound one-time approval. High/critical-risk or highly restricted access, and execute/administer/revoke actions, require a scoped task, recent MFA and an independent eligible approver. These service routes are covered by automated regression tests, but the access-check API is not an operation handler: future product backends must re-check authorization, consume approval and execute the protected effect in one secure transaction.
+
+The service is not production-ready. No identity provider, resource registry or deployment is configured. Provider-specific claim mapping, operational monitoring, secret rotation, audit anchoring, recovery drills, and the browser integration remain incomplete. See [the browser integration plan](ENTITY_AUTH_BROWSER_INTEGRATION.md) and [service status](../backend/auth-service/README.md).

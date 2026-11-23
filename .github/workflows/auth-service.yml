@@ -47,6 +47,30 @@ jobs:
           cache-dependency-path: backend/auth-service/pyproject.toml
       - name: Install service and test dependencies
         run: python -m pip install -e "backend/auth-service[test]"
-      - name: Run authorization tests
+      - name: Apply production migration path to the test database
+        working-directory: backend/auth-service
+        run: |
+          python - <<'PY'
+          import os
+          import secrets
+
+          os.environ["ENTITY_AUDIT_HMAC_KEY"] = secrets.token_urlsafe(48)
+          from alembic import command
+          from alembic.config import Config
+
+          command.upgrade(Config("alembic.ini"), "head")
+          PY
+      - name: Prepare a PR #5 schema for upgrade coverage
+        env:
+          ENTITY_DATABASE_URL: postgresql+psycopg://postgres@localhost:5432/entity_legacy
+        run: |
+          createdb -h localhost -U postgres entity_legacy
+          python backend/auth-service/tests/fixtures/create_pr5_schema.py
+      - name: Upgrade PR #5 schema and verify preserved owner data
+        working-directory: backend/auth-service
+        env:
+          ENTITY_DATABASE_URL: postgresql+psycopg://postgres@localhost:5432/entity_legacy
+        run: python tests/fixtures/migrate_pr5_schema.py
+      - name: Run complete auth-service test suite
         working-directory: backend/auth-service
         run: python -m pytest -q

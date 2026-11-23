@@ -80,6 +80,36 @@ class SharedResourceGrant(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ResourcePolicy(Base):
+    __tablename__ = "entity_resource_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "classification IN ('public', 'internal', 'restricted', 'highly_restricted')",
+            name="ck_resource_policy_classification",
+        ),
+        CheckConstraint(
+            "risk IN ('low', 'moderate', 'high', 'critical')",
+            name="ck_resource_policy_risk",
+        ),
+        CheckConstraint(
+            "version >= 1",
+            name="ck_resource_policy_version",
+        ),
+    )
+
+    resource_type: Mapped[str] = mapped_column(String(80), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(
+        ForeignKey("entity_users.subject", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    division: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False)
+    risk: Mapped[str] = mapped_column(String(16), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class TokenSession(Base):
     __tablename__ = "entity_token_sessions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -93,6 +123,10 @@ class TokenSession(Base):
 
 class ActionApproval(Base):
     __tablename__ = "entity_action_approvals"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="ck_action_approval_status"),
+        CheckConstraint("required_approver_rank IN (0, 1)", name="ck_action_approval_reviewer_rank"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     requester: Mapped[str] = mapped_column(ForeignKey("entity_users.subject"), nullable=False, index=True)
@@ -109,6 +143,31 @@ class ActionApproval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resource_owner_subject: Mapped[str | None] = mapped_column(String(255))
+    resource_version: Mapped[int | None] = mapped_column(Integer)
+    required_approver_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AdminChange(Base):
+    __tablename__ = "entity_admin_changes"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="ck_admin_change_status"),
+        CheckConstraint("required_approver_rank = 1", name="ck_admin_change_reviewer_rank"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    requester: Mapped[str] = mapped_column(ForeignKey("entity_users.subject"), nullable=False, index=True)
+    operation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    required_approver_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    approver: Mapped[str | None] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuditEvent(Base):
