@@ -305,7 +305,7 @@ def authorize(
 
     if not root_owner and not baseline and not shared:
         return Decision(False, "rank_or_assignment_insufficient", context)
-    if require_independent_approval and high_risk and not _has_approval(
+    if require_independent_approval and approval_required and not _has_approval(
         db, user.subject, user.rank, request, context, now
     ):
         return Decision(False, "independent_approval_required", context)
