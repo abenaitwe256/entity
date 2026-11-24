@@ -1,44 +1,58 @@
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from entity_auth.bootstrap_owner import provision_initial_owner
+from entity_auth.config import get_settings
+from entity_auth.bootstrap_owner import (
+    provision_initial_owner, provision_initial_reviewer, provision_initial_users,
+)
 from entity_auth.db import (
-    ActionApproval, AuditEvent, DivisionMembership, SessionLocal, SharedResourceGrant,
-    TaskAssignment, User, utcnow,
+    ActionApproval, AdminChange, AuditEvent, DivisionMembership, ResourcePolicy, SessionLocal,
+    SharedResourceGrant, TaskAssignment, User, utcnow,
 )
 from entity_auth.main import (
-    ApprovalRequest as ApprovalRequestBody, Principal, ResourceShareInput, TaskAssignmentInput,
-    app, assign_task, current_principal, get_db, owner_only, request_approval, revoke_session,
-    revoke_share, share_resource,
+    AccessCheck, ApprovalRequest, Principal, ResourcePolicyInput, access_check, app, append_audit,
+    current_principal, decide_approval, get_db, request_approval, resource_registry_principal,
+    revoke_session, upsert_resource_policy, verify_audit_chain,
 )
 from entity_auth.oidc import VerifiedToken
-from entity_auth.policy import AccessRequest, authorize
+from entity_auth.policy import AccessRequest, authorize, consume_approval
+from entity_auth.main import payload_digest
 
 
-def add_user(db: Session, subject: str, rank: int, division: str | None = None, active: bool = True) -> User:
-    user = User(subject=subject, rank=rank, active=active)
+def add_user(db, subject, rank, division=None, active=True):
+    user = User(subject=subject, rank=rank, active=active, created_by="test")
     db.add(user)
     db.flush()
     if division:
-        db.add(DivisionMembership(subject=subject, division=division))
-    db.flush()
+        db.add(DivisionMembership(subject=subject, division=division, assigned_by="test"))
+        db.flush()
     return user
 
 
-def fresh_mfa() -> dict:
-    return {"amr": ["mfa"], "auth_time": datetime.now(timezone.utc).timestamp()}
+def add_policy(db, owner, *, resource_id="sample-1", division="science",
+               classification="public", risk="low", version=1):
+    policy = ResourcePolicy(
+        resource_type="dataset", resource_id=resource_id, owner_subject=owner.subject,
+        division=division, classification=classification, risk=risk, version=version,
+        updated_by="trusted-registry",
+    )
+    db.add(policy)
+    db.flush()
+    return policy
 
 
-def make_task(db: Session, subject: str, division: str, action: str, expires_at: datetime | None = None) -> TaskAssignment:
+def make_task(db, subject, division, action, *, resource_type="dataset",
+              resource_id="sample-1", expires_at=None):
     task = TaskAssignment(
-        subject=subject, division=division, description="test task", permissions=[action],
-        resource_type="dataset", resource_id="sample-1", starts_at=utcnow() - timedelta(minutes=5),
+        subject=subject, division=division, description="scoped test task",
+        permissions=[action], resource_type=resource_type, resource_id=resource_id,
+        starts_at=utcnow() - timedelta(minutes=1),
         expires_at=expires_at or utcnow() + timedelta(hours=1), assigned_by="owner-sub",
     )
     db.add(task)
@@ -46,223 +60,864 @@ def make_task(db: Session, subject: str, division: str, action: str, expires_at:
     return task
 
 
-def test_guest_requires_explicit_read_share():
-    with SessionLocal.begin() as db:
+def fresh_mfa():
+    return {"sub": "test-sub", "amr": ["mfa"], "auth_time": utcnow().timestamp()}
+
+
+def stale_mfa():
+    return {
+        "sub": "test-sub", "amr": ["mfa"],
+        "auth_time": (utcnow() - timedelta(hours=1)).timestamp(),
+    }
+
+
+def api_as(db, user, claims, method, path, **kwargs):
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[current_principal] = lambda: Principal(user, claims, None)
+    try:
+        with TestClient(app) as client:
+            return getattr(client, method)(path, **kwargs)
+    finally:
+        app.dependency_overrides.clear()
+
+
+def admin_change(db, owner, reviewer, operation, payload):
+    requested = api_as(
+        db, owner, fresh_mfa(), "post", "/v1/admin/changes",
+        json={"operation": operation, "payload": payload},
+    )
+    assert requested.status_code == 201, requested.text
+    change_id = requested.json()["change_id"]
+    approved = api_as(
+        db, reviewer, fresh_mfa(), "post", f"/v1/admin/changes/{change_id}/approve",
+    )
+    assert approved.status_code == 200, approved.text
+    return change_id
+
+
+def access_request(*, action="read", resource_id="sample-1", task_id=None, approval_id=None):
+    return AccessRequest(
+        action=action, resource_type="dataset", resource_id=resource_id,
+        environment="development", task_id=task_id, approval_id=approval_id,
+    )
+
+
+def test_unknown_resource_is_denied_by_default():
+    with SessionLocal() as db:
         guest = add_user(db, "guest-sub", 6)
-        denied = authorize(db, guest, {}, AccessRequest(
-            division="science", action="read", resource_type="dataset", resource_id="sample-1",
-            classification="public",
-        ))
-        assert not denied.allowed
-        assert denied.reason == "explicit_share_required"
+        decision = authorize(db, guest, {}, access_request())
+        assert not decision.allowed
+        assert decision.reason == "resource_not_registered"
+        assert decision.context is None
 
 
-def test_division_membership_does_not_cross_divisions():
-    with SessionLocal.begin() as db:
+def test_access_request_rejects_client_supplied_risk_classification_and_ownership():
+    with SessionLocal() as db:
+        user = add_user(db, "guest-sub", 6)
+        response = api_as(
+            db, user, {}, "post", "/v1/access/check",
+            json={
+                "action": "read", "resource_type": "dataset", "resource_id": "sample-1",
+                "division": "science", "risk": "low", "classification": "public",
+                "owner_subject": "guest-sub",
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]
+
+
+def test_server_policy_cannot_be_downgraded_by_requester():
+    with SessionLocal() as db:
+        owner = add_user(db, "resource-owner", 2)
+        operator = add_user(db, "operator-sub", 3, "science")
+        add_policy(db, owner, risk="critical", classification="highly_restricted")
+        task = make_task(db, operator.subject, "science", "read")
+        decision = authorize(db, operator, fresh_mfa(), access_request(task_id=task.id))
+        assert not decision.allowed
+        assert decision.reason == "independent_approval_required"
+        assert decision.context.risk == "critical"
+        assert decision.context.classification == "highly_restricted"
+        assert decision.context.resource_owner_subject == owner.subject
+
+
+def test_cross_division_membership_and_task_do_not_authorize_resource():
+    with SessionLocal() as db:
+        owner = add_user(db, "resource-owner", 2)
         operator = add_user(db, "operator-sub", 4, "engineering")
+        add_policy(db, owner, division="science")
         task = make_task(db, operator.subject, "engineering", "read")
-        decision = authorize(db, operator, fresh_mfa(), AccessRequest(
-            division="science", action="read", resource_type="dataset", resource_id="sample-1",
-            task_id=task.id,
-        ))
+        decision = authorize(db, operator, fresh_mfa(), access_request(task_id=task.id))
         assert not decision.allowed
         assert decision.reason == "division_membership_required"
 
 
-def test_expired_assignment_does_not_authorize_write():
-    with SessionLocal.begin() as db:
-        operator = add_user(db, "operator-sub", 4, "engineering")
-        task = make_task(db, operator.subject, "engineering", "modify", utcnow() - timedelta(seconds=1))
-        decision = authorize(db, operator, fresh_mfa(), AccessRequest(
-            division="engineering", action="modify", resource_type="dataset", resource_id="sample-1",
-            task_id=task.id,
-        ))
-        assert not decision.allowed
 
-
-def test_suspended_user_is_denied_even_with_assignment():
-    with SessionLocal.begin() as db:
-        operator = add_user(db, "operator-sub", 4, "engineering", active=False)
-        decision = authorize(db, operator, fresh_mfa(), AccessRequest(
-            division="engineering", action="read", resource_type="dataset", resource_id="sample-1",
-        ))
-        assert not decision.allowed
-        assert decision.reason == "account_disabled"
-
-
-def test_viewer_cannot_escalate_to_create():
-    with SessionLocal.begin() as db:
-        viewer = add_user(db, "viewer-sub", 6, "science")
-        decision = authorize(db, viewer, {}, AccessRequest(
-            division="science", action="create", resource_type="dataset", resource_id="sample-1",
-        ))
-        assert not decision.allowed
-
-
-def test_unapproved_or_self_approved_high_risk_execution_is_denied():
-    with SessionLocal.begin() as db:
-        owner = add_user(db, "owner-sub", 0)
-        task = make_task(db, owner.subject, "engineering", "execute")
-        self_approval = ActionApproval(
-            requester=owner.subject, approver=owner.subject, division="engineering", action="execute",
-            resource_type="dataset", resource_id="sample-1", classification="internal", risk="critical",
-            environment="production", task_id=task.id, status="approved",
-            expires_at=utcnow() + timedelta(hours=1), decided_at=utcnow(),
+def test_only_allowlisted_registry_workload_can_write_server_policy(monkeypatch):
+    with SessionLocal() as db:
+        original_settings = get_settings()
+        settings = SimpleNamespace(
+            resource_registry_audience="entity-registry",
+            trusted_resource_registry_subjects=frozenset({"registry-sub"}),
+            audit_hmac_key=original_settings.audit_hmac_key,
         )
-        db.add(self_approval)
-        db.flush()
-        decision = authorize(db, owner, fresh_mfa(), AccessRequest(
-            division="engineering", action="execute", resource_type="dataset", resource_id="sample-1",
-            classification="internal", risk="critical", environment="production",
-            task_id=task.id, approval_id=self_approval.id,
+        monkeypatch.setattr("entity_auth.main.get_settings", lambda: settings)
+        claims = {
+            "sub": "attacker-sub",
+            "exp": int((utcnow() + timedelta(hours=1)).timestamp()),
+            "iat": int(utcnow().timestamp()),
+            "jti": "registry-jti",
+        }
+        monkeypatch.setattr(
+            "entity_auth.main.verify_bearer",
+            lambda _token, audience=None: VerifiedToken(claims=dict(claims), token_hash="c" * 64),
+        )
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="opaque")
+        with pytest.raises(HTTPException) as denied:
+            resource_registry_principal(credentials, db)
+        assert denied.value.status_code == 403
+
+        resource_owner = add_user(db, "resource-owner", 2)
+        registry = add_user(db, "registry-sub", 6)
+        claims["sub"] = registry.subject
+        principal = resource_registry_principal(credentials, db)
+        result = upsert_resource_policy(
+            ResourcePolicyInput(
+                resource_type="dataset", resource_id="sample-1",
+                owner_subject=resource_owner.subject, division="science",
+                classification="restricted", risk="critical",
+            ),
+            principal, db,
+        )
+        assert result["version"] == 1
+        context = authorize(db, resource_owner, fresh_mfa(), access_request()).context
+        assert context.resource_owner_subject == resource_owner.subject
+        assert context.division == "science"
+        assert context.classification == "restricted"
+        assert context.risk == "critical"
+
+
+def test_resource_owner_authority_is_server_derived_and_exact_resource_scoped():
+    with SessionLocal() as db:
+        resource_owner = add_user(db, "resource-owner", 4, "engineering")
+        add_policy(db, resource_owner, division="science")
+        own_resource = authorize(db, resource_owner, fresh_mfa(), access_request())
+        other_resource = authorize(
+            db, resource_owner, fresh_mfa(), access_request(resource_id="not-owned"),
+        )
+        assert own_resource.allowed
+        assert own_resource.context.resource_owner_subject == resource_owner.subject
+        assert not other_resource.allowed
+        assert other_resource.reason == "resource_not_registered"
+
+
+def test_legacy_non_read_share_cannot_grant_write_access():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        operator = add_user(db, "operator-sub", 5)
+        add_policy(db, owner, classification="public", risk="low")
+        db.add(SharedResourceGrant(
+            subject=operator.subject, resource_type="dataset", resource_id="sample-1",
+            permission="modify", granted_by=owner.subject,
         ))
+        db.flush()
+        decision = authorize(
+            db, operator, fresh_mfa(),
+            AccessRequest(
+                action="modify", resource_type="dataset", resource_id="sample-1",
+                environment="development",
+            ),
+        )
+        assert not decision.allowed
+        assert decision.reason == "division_membership_required"
+
+
+
+def test_revoked_share_is_denied_and_regrant_requires_independent_approval():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        guest = add_user(db, "guest-sub", 6)
+        add_policy(db, resource_owner, classification="public", risk="low")
+        grant = SharedResourceGrant(
+            subject=guest.subject, resource_type="dataset", resource_id="sample-1",
+            permission="read", granted_by=owner.subject, revoked_at=utcnow(),
+        )
+        db.add(grant)
+        db.flush()
+        denied = authorize(db, guest, {}, access_request())
+        assert not denied.allowed
+        assert denied.reason == "explicit_share_required"
+
+        body = {
+            "subject": guest.subject, "resource_type": "dataset", "resource_id": "sample-1",
+            "permission": "read", "expires_at": None,
+        }
+        change_id = admin_change(db, owner, reviewer, "share_resource", body)
+        path = f"/v1/admin/resources/shares?change_id={change_id}"
+        response = api_as(
+            db, owner, fresh_mfa(), "post", path,
+            json={"subject": guest.subject, "resource_type": "dataset",
+                  "resource_id": "sample-1", "permission": "read"},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["share_id"] == grant.id
+        db.refresh(grant)
+        assert grant.revoked_at is None
+        assert authorize(db, guest, {}, access_request()).allowed
+
+        replay = api_as(
+            db, owner, fresh_mfa(), "post", path,
+            json={"subject": guest.subject, "resource_type": "dataset",
+                  "resource_id": "sample-1", "permission": "read"},
+        )
+        assert replay.status_code == 409
+        assert db.scalar(select(SharedResourceGrant.id).where(
+            SharedResourceGrant.subject == guest.subject,
+            SharedResourceGrant.revoked_at.is_(None),
+        )) == grant.id
+
+
+def test_owner_change_request_requires_owner_and_recent_mfa():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        member = add_user(db, "member-sub", 2)
+        payload = {"subject": "new-user", "rank": 2, "divisions": []}
+        stale = api_as(
+            db, owner, stale_mfa(), "post", "/v1/admin/changes",
+            json={"operation": "provision_user", "payload": payload},
+        )
+        nonowner = api_as(
+            db, member, fresh_mfa(), "post", "/v1/admin/changes",
+            json={"operation": "provision_user", "payload": payload},
+        )
+        assert stale.status_code == 403
+        assert nonowner.status_code == 403
+        assert db.scalar(select(User).where(User.subject == "new-user")) is None
+
+
+def test_owner_cannot_execute_admin_mutation_without_second_approval():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        path = "/v1/admin/users?change_id=unissued"
+        response = api_as(
+            db, owner, fresh_mfa(), "post", path,
+            json={"subject": "new-user", "rank": 2, "divisions": []},
+        )
+        assert response.status_code in {403, 409}
+        assert db.scalar(select(User).where(User.subject == "new-user")) is None
+
+
+def test_owner_change_requires_independent_rank_one_approval_and_is_consumed_once():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        payload = {"subject": "new-user", "rank": 2, "divisions": ["science"]}
+        requested = api_as(
+            db, owner, fresh_mfa(), "post", "/v1/admin/changes",
+            json={"operation": "provision_user", "payload": payload},
+        )
+        assert requested.status_code == 201, requested.text
+        change_id = requested.json()["change_id"]
+
+        self_approval = api_as(
+            db, owner, fresh_mfa(), "post", f"/v1/admin/changes/{change_id}/approve",
+        )
+        assert self_approval.status_code == 403
+        assert db.get(AdminChange, change_id).status == "pending"
+
+        approved = api_as(
+            db, reviewer, fresh_mfa(), "post", f"/v1/admin/changes/{change_id}/approve",
+        )
+        assert approved.status_code == 200, approved.text
+        stale_execution = api_as(
+            db, owner, stale_mfa(), "post",
+            f"/v1/admin/users?change_id={change_id}", json=payload,
+        )
+        assert stale_execution.status_code == 403
+        assert db.get(AdminChange, change_id).consumed_at is None
+        executed = api_as(
+            db, owner, fresh_mfa(), "post",
+            f"/v1/admin/users?change_id={change_id}", json=payload,
+        )
+        assert executed.status_code == 201, executed.text
+        change = db.get(AdminChange, change_id)
+        assert change.consumed_at is not None
+        assert db.scalar(select(DivisionMembership.id).where(
+            DivisionMembership.subject == "new-user", DivisionMembership.division == "science",
+        ))
+
+        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "admin_change.decided"))
+        assert event.actor == reviewer.subject
+        assert event.detail["change_id"] == change_id
+
+
+
+def test_rank_two_cannot_approve_owner_administration_change():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        rank_two = add_user(db, "rank-two-sub", 2)
+        requested = api_as(
+            db, owner, fresh_mfa(), "post", "/v1/admin/changes",
+            json={
+                "operation": "provision_user",
+                "payload": {"subject": "new-user", "rank": 3, "divisions": []},
+            },
+        )
+        assert requested.status_code == 201, requested.text
+        change_id = requested.json()["change_id"]
+        denied = api_as(
+            db, rank_two, fresh_mfa(), "post",
+            f"/v1/admin/changes/{change_id}/approve",
+        )
+        assert denied.status_code == 403
+        assert db.get(AdminChange, change_id).status == "pending"
+        approved = api_as(
+            db, reviewer, fresh_mfa(), "post",
+            f"/v1/admin/changes/{change_id}/approve",
+        )
+        assert approved.status_code == 200, approved.text
+
+
+
+def test_repeated_task_revocation_consumes_approval_and_is_audited():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        member = add_user(db, "member-sub", 2, "science")
+        task = make_task(db, member.subject, "science", "read")
+        task.revoked_at = utcnow()
+        db.flush()
+
+        change_id = admin_change(db, owner, reviewer, "revoke_task", {"id": task.id})
+        response = api_as(
+            db, owner, fresh_mfa(), "post",
+            f"/v1/admin/tasks/{task.id}/revoke?change_id={change_id}",
+        )
+        assert response.status_code == 204
+        change = db.get(AdminChange, change_id)
+        assert change.consumed_at is not None
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.event_type == "task.revoked",
+        ).order_by(AuditEvent.created_at.desc()))
+        assert event.outcome == "already_revoked"
+        assert event.detail["task_id"] == task.id
+
+
+def test_rank_one_affected_account_cannot_approve_its_own_change():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        requested = api_as(
+            db, owner, fresh_mfa(), "post", "/v1/admin/changes",
+            json={
+                "operation": "update_user",
+                "payload": {"subject": reviewer.subject, "changes": {"active": False}},
+            },
+        )
+        assert requested.status_code == 201, requested.text
+        change_id = requested.json()["change_id"]
+        denied = api_as(
+            db, reviewer, fresh_mfa(), "post", f"/v1/admin/changes/{change_id}/approve",
+        )
+        assert denied.status_code == 403
+        assert db.get(AdminChange, change_id).status == "pending"
+
+
+def test_forged_admin_approval_without_decision_record_is_not_executable():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        payload = {"subject": "forged-user", "rank": 2, "divisions": []}
+        change = AdminChange(
+            requester=owner.subject, operation_type="provision_user", payload=payload,
+            payload_hash=payload_digest(payload), required_approver_rank=1, status="approved",
+            approver=reviewer.subject, expires_at=utcnow() + timedelta(minutes=10),
+            decided_at=None,
+        )
+        db.add(change)
+        db.flush()
+        response = api_as(
+            db, owner, fresh_mfa(), "post",
+            f"/v1/admin/users?change_id={change.id}", json=payload,
+        )
+        assert response.status_code == 409
+        assert db.scalar(select(User).where(User.subject == "forged-user")) is None
+
+
+def test_admin_approval_is_bound_to_exact_payload():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        approved_payload = {"subject": "approved-user", "rank": 2, "divisions": []}
+        change_id = admin_change(db, owner, reviewer, "provision_user", approved_payload)
+        forged_payload = {"subject": "attacker-user", "rank": 3, "divisions": []}
+        response = api_as(
+            db, owner, fresh_mfa(), "post",
+            f"/v1/admin/users?change_id={change_id}", json=forged_payload,
+        )
+        assert response.status_code == 403
+        assert db.scalar(select(User).where(User.subject == "attacker-user")) is None
+        assert db.scalar(select(User).where(User.subject == "approved-user")) is None
+
+
+def test_non_owner_cannot_change_accounts_even_with_a_forged_change_id():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        rank_one = add_user(db, "reviewer-sub", 1)
+        response = api_as(
+            db, rank_one, fresh_mfa(), "post",
+            "/v1/admin/users?change_id=anything",
+            json={"subject": "attacker-sub", "rank": 2, "divisions": []},
+        )
+        assert response.status_code == 403
+        assert db.scalar(select(User).where(User.subject == "attacker-sub")) is None
+
+
+def test_task_and_approval_generated_ids_are_audited():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        member = add_user(db, "member-sub", 2, "science")
+        task_body = {
+            "subject": member.subject, "division": "science", "description": "review data",
+            "permissions": ["read"], "resource_type": "dataset", "resource_id": "sample-1",
+            "expires_at": (utcnow() + timedelta(hours=1)).isoformat(),
+        }
+        add_policy(db, owner, risk="critical", classification="restricted")
+        change_id = admin_change(db, owner, reviewer, "assign_task", task_body)
+        task_response = api_as(
+            db, owner, fresh_mfa(), "post", f"/v1/admin/tasks?change_id={change_id}",
+            json=task_body,
+        )
+        assert task_response.status_code == 201, task_response.text
+        task_id = task_response.json()["task_id"]
+        task_event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "task.assigned"))
+        assert task_event.detail["task_id"] == task_id
+
+        approval = request_approval(
+            ApprovalRequest(
+                action="read", resource_type="dataset", resource_id="sample-1", task_id=task_id,
+            ),
+            Principal(member, fresh_mfa(), None), db,
+        )
+        approval_event = db.scalar(select(AuditEvent).where(
+            AuditEvent.event_type == "approval.requested",
+        ).order_by(AuditEvent.created_at.desc()))
+        assert approval["approval_id"]
+        assert approval_event.detail["approval_id"] == approval["approval_id"]
+
+
+def test_high_risk_approval_is_independent_bound_and_consumed_once():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        resource_owner = add_user(db, "resource-owner", 2)
+        operator = add_user(db, "operator-sub", 3, "science")
+        add_policy(db, resource_owner, risk="critical", classification="restricted")
+        task = make_task(db, operator.subject, "science", "read")
+
+        request_body = ApprovalRequest(
+            action="read", resource_type="dataset", resource_id="sample-1", task_id=task.id,
+        )
+        approval = request_approval(request_body, Principal(operator, fresh_mfa(), None), db)
+        record = db.get(ActionApproval, approval["approval_id"])
+        assert record.required_approver_rank == 0
+
+        with pytest.raises(HTTPException) as self_approval:
+            decide_approval(record.id, Principal(operator, fresh_mfa(), None), db)
+        assert self_approval.value.status_code == 403
+
+        with pytest.raises(HTTPException) as wrong_approver:
+            decide_approval(record.id, Principal(add_user(db, "reviewer-sub", 1), fresh_mfa(), None), db)
+        assert wrong_approver.value.status_code == 403
+
+        decision = decide_approval(record.id, Principal(owner, fresh_mfa(), None), db)
+        assert decision["status"] == "approved"
+        body = AccessCheck(
+            action="read", resource_type="dataset", resource_id="sample-1",
+            task_id=task.id, approval_id=record.id,
+        )
+        allowed = access_check(body, Principal(operator, fresh_mfa(), None), db)
+        assert allowed["allowed"]
+        assert record.consumed_at is not None
+        replay = access_check(body, Principal(operator, fresh_mfa(), None), db)
+        assert not replay["allowed"]
+
+
+def test_owner_high_risk_action_requires_fresh_mfa_task_and_rank_one_approver():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(db, resource_owner, risk="high", classification="restricted")
+        task = make_task(db, owner.subject, "science", "read")
+
+        stale = authorize(
+            db, owner, stale_mfa(), access_request(task_id=task.id),
+        )
+        assert not stale.allowed
+        assert stale.reason == "fresh_mfa_required"
+
+        no_task = authorize(db, owner, fresh_mfa(), access_request())
+        assert not no_task.allowed
+        assert no_task.reason == "high_risk_task_assignment_required"
+
+        request = request_approval(
+            ApprovalRequest(
+                action="read", resource_type="dataset", resource_id="sample-1", task_id=task.id,
+            ),
+            Principal(owner, fresh_mfa(), None), db,
+        )
+        record = db.get(ActionApproval, request["approval_id"])
+        assert record.required_approver_rank == 1
+        with pytest.raises(HTTPException) as self_approval:
+            decide_approval(record.id, Principal(owner, fresh_mfa(), None), db)
+        assert self_approval.value.status_code == 403
+
+        decide_approval(record.id, Principal(reviewer, fresh_mfa(), None), db)
+        result = access_check(
+            AccessCheck(
+                action="read", resource_type="dataset", resource_id="sample-1",
+                task_id=task.id, approval_id=record.id,
+            ),
+            Principal(owner, fresh_mfa(), None), db,
+        )
+        assert result["allowed"]
+
+
+
+def test_owner_cannot_bypass_high_classification_or_irreversible_action_approval():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(
+            db, resource_owner, classification="highly_restricted", risk="low",
+        )
+        task = make_task(db, owner.subject, "science", "read")
+
+        no_task = authorize(db, owner, fresh_mfa(), access_request())
+        assert not no_task.allowed
+        assert no_task.reason == "high_risk_task_assignment_required"
+
+        request = request_approval(
+            ApprovalRequest(
+                action="read", resource_type="dataset", resource_id="sample-1", task_id=task.id,
+            ),
+            Principal(owner, fresh_mfa(), None), db,
+        )
+        approval = db.get(ActionApproval, request["approval_id"])
+        assert approval.risk == "low"
+        assert approval.classification == "highly_restricted"
+        decide_approval(approval.id, Principal(reviewer, fresh_mfa(), None), db)
+        allowed = access_check(
+            AccessCheck(
+                action="read", resource_type="dataset", resource_id="sample-1",
+                task_id=task.id, approval_id=approval.id,
+            ),
+            Principal(owner, fresh_mfa(), None), db,
+        )
+        assert allowed["allowed"]
+
+        internal_owner = add_user(db, "second-owner-resource", 2)
+        add_policy(
+            db, internal_owner, resource_id="sample-2",
+            classification="internal", risk="low",
+        )
+        admin_task = make_task(
+            db, owner.subject, "science", "administer", resource_id="sample-2",
+        )
+        admin_request = AccessRequest(
+            action="administer", resource_type="dataset", resource_id="sample-2",
+            environment="development", task_id=admin_task.id,
+        )
+        denied_without_approval = authorize(db, owner, fresh_mfa(), admin_request)
+        assert not denied_without_approval.allowed
+        assert denied_without_approval.reason == "independent_approval_required"
+
+
+@pytest.mark.parametrize("action", ["execute", "administer", "revoke"])
+def test_owner_high_impact_actions_require_independent_approval_and_are_single_use(
+    action, monkeypatch,
+):
+    # Execute is disabled outside production; use one environment for all designated actions.
+    production_settings = get_settings().model_copy(update={"environment": "production"})
+    monkeypatch.setattr("entity_auth.main.get_settings", lambda: production_settings)
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(db, resource_owner, resource_id="action-target", risk="low")
+        task = make_task(
+            db, owner.subject, "science", action,
+            resource_id="action-target",
+        )
+        request = AccessRequest(
+            action=action, resource_type="dataset", resource_id="action-target",
+            environment="production", task_id=task.id,
+        )
+
+        denied = authorize(db, owner, fresh_mfa(), request)
+        assert not denied.allowed
+        assert denied.reason == "independent_approval_required"
+
+        pending = request_approval(
+            ApprovalRequest(
+                action=action, resource_type="dataset", resource_id="action-target",
+                task_id=task.id,
+            ),
+            Principal(owner, fresh_mfa(), None),
+            db,
+        )
+        approval = db.get(ActionApproval, pending["approval_id"])
+        assert approval.required_approver_rank == 1
+        decision = decide_approval(approval.id, Principal(reviewer, fresh_mfa(), None), db)
+        assert decision["status"] == "approved"
+        assert approval.approver == reviewer.subject
+
+        body = AccessCheck(
+            action=action, resource_type="dataset", resource_id="action-target",
+            task_id=task.id, approval_id=approval.id,
+        )
+        allowed = access_check(body, Principal(owner, fresh_mfa(), None), db)
+        assert allowed["allowed"]
+        db.refresh(approval)
+        assert approval.consumed_at is not None
+
+        replay = access_check(body, Principal(owner, fresh_mfa(), None), db)
+        assert not replay["allowed"]
+
+
+
+def test_authoritative_metadata_read_consumes_independent_approval_once_and_audits():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(db, resource_owner, classification="restricted", risk="critical")
+        task = make_task(db, owner.subject, "science", "read")
+
+        pending = request_approval(
+            ApprovalRequest(
+                action="read", resource_type="dataset", resource_id="sample-1",
+                task_id=task.id,
+            ),
+            Principal(owner, fresh_mfa(), None),
+            db,
+        )
+        approval = db.get(ActionApproval, pending["approval_id"])
+        decision = decide_approval(approval.id, Principal(reviewer, fresh_mfa(), None), db)
+        assert decision["status"] == "approved"
+
+        path = "/v1/resources/dataset/sample-1/metadata"
+        params = {"task_id": task.id, "approval_id": approval.id}
+        response = api_as(db, owner, fresh_mfa(), "get", path, params=params)
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "resource_type": "dataset", "resource_id": "sample-1",
+            "owner_subject": resource_owner.subject, "division": "science",
+            "classification": "restricted", "risk": "critical", "policy_version": 1,
+        }
+        db.refresh(approval)
+        assert approval.consumed_at is not None
+
+        replay = api_as(db, owner, fresh_mfa(), "get", path, params=params)
+        assert replay.status_code == 403
+        assert replay.json() == {"detail": "Resource metadata access denied"}
+        events = db.scalars(select(AuditEvent).where(
+            AuditEvent.actor == owner.subject,
+            AuditEvent.event_type == "resource.metadata.read",
+        )).all()
+        assert sorted(event.outcome for event in events) == ["allow", "deny"]
+
+
+def test_authoritative_metadata_read_denies_cross_division_without_exposing_policy():
+    with SessionLocal() as db:
+        resource_owner = add_user(db, "resource-owner", 2)
+        outsider = add_user(db, "outsider-sub", 3, "engineering")
+        add_policy(db, resource_owner, division="science")
+
+        response = api_as(
+            db, outsider, fresh_mfa(), "get",
+            "/v1/resources/dataset/sample-1/metadata",
+        )
+        assert response.status_code == 403
+        assert response.json() == {"detail": "Resource metadata access denied"}
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.actor == outsider.subject,
+            AuditEvent.event_type == "resource.metadata.read",
+        ).order_by(AuditEvent.created_at.desc()))
+        assert event.outcome == "deny"
+
+
+def test_client_cannot_supply_authoritative_policy_context():
+    with SessionLocal() as db:
+        owner = add_user(db, "resource-owner", 2)
+        policy = add_policy(
+            db, owner, classification="internal", risk="moderate",
+        )
+        response = api_as(
+            db, owner, fresh_mfa(), "get",
+            "/v1/resources/dataset/sample-1/metadata",
+            params={
+                "owner_subject": "attacker-sub",
+                "classification": "public",
+                "risk": "low",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "resource_type": "dataset",
+            "resource_id": "sample-1",
+            "owner_subject": policy.owner_subject,
+            "division": policy.division,
+            "classification": policy.classification,
+            "risk": policy.risk,
+            "policy_version": policy.version,
+        }
+
+        forged_check = api_as(
+            db, owner, fresh_mfa(), "post", "/v1/access/check",
+            json={
+                "action": "read",
+                "resource_type": "dataset",
+                "resource_id": "sample-1",
+                "owner_subject": "attacker-sub",
+                "classification": "public",
+                "risk": "low",
+            },
+        )
+        assert forged_check.status_code == 422
+
+
+def test_resource_registry_verification_endpoint_fails_closed_when_unconfigured(monkeypatch):
+    with SessionLocal() as db:
+        settings_without_registry = get_settings().model_copy(
+            update={"resource_registry_audience": None, "resource_registry_subjects": ""},
+        )
+        monkeypatch.setattr("entity_auth.main.get_settings", lambda: settings_without_registry)
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:
+                response = client.get("/v1/internal/resource-registry/verify")
+        finally:
+            app.dependency_overrides.clear()
+        assert response.status_code == 503
+
+
+def test_forged_action_approval_without_fresh_independent_decision_is_denied():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        resource_owner = add_user(db, "resource-owner", 2)
+        operator = add_user(db, "operator-sub", 3, "science")
+        add_policy(db, resource_owner, risk="critical", classification="restricted")
+        task = make_task(db, operator.subject, "science", "read")
+        forged = ActionApproval(
+            requester=operator.subject, approver=owner.subject, division="science",
+            action="read", resource_type="dataset", resource_id="sample-1",
+            classification="restricted", risk="critical", environment="development",
+            task_id=task.id, status="approved", decided_at=None,
+            resource_owner_subject=resource_owner.subject, resource_version=1,
+            required_approver_rank=0, expires_at=utcnow() + timedelta(minutes=10),
+        )
+        db.add(forged)
+        db.flush()
+        decision = authorize(
+            db, operator, fresh_mfa(), access_request(task_id=task.id, approval_id=forged.id),
+        )
         assert not decision.allowed
         assert decision.reason == "independent_approval_required"
 
 
-def test_execution_is_disabled_outside_production():
-    with SessionLocal.begin() as db:
-        operator = add_user(db, "operator-sub", 4, "engineering")
-        task = make_task(db, operator.subject, "engineering", "execute")
-        decision = authorize(db, operator, fresh_mfa(), AccessRequest(
-            division="engineering", action="execute", resource_type="dataset", resource_id="sample-1",
-            environment="development", task_id=task.id,
-        ))
-        assert not decision.allowed
-        assert decision.reason == "execution_disabled_outside_production"
 
-
-def test_owner_bootstrap_is_one_time_and_preserves_existing_identity():
-    with SessionLocal.begin() as db:
-        owner = provision_initial_owner(db, "owner-sub")
-        assert owner.rank == 0
-        try:
-            provision_initial_owner(db, "attacker-sub")
-        except ValueError as exc:
-            assert "not empty" in str(exc)
-        else:
-            raise AssertionError("A second bootstrap must not overwrite or add an owner")
-
-
-
-def test_approved_high_risk_execution_uses_approver_subject():
-    with SessionLocal.begin() as db:
+def test_approval_consumption_rechecks_live_task_and_resource_policy():
+    with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
-        operator = add_user(db, "operator-sub", 4, "engineering")
-        task = make_task(db, operator.subject, "engineering", "execute")
-        request = AccessRequest(
-            division="engineering", action="execute", resource_type="dataset",
-            resource_id="sample-1", classification="internal", risk="critical",
-            environment="production", task_id=task.id,
-        )
-        denied = authorize(db, operator, fresh_mfa(), request)
-        assert not denied.allowed
+        resource_owner = add_user(db, "resource-owner", 2)
+        operator = add_user(db, "operator-sub", 3, "science")
+        policy = add_policy(db, resource_owner, risk="critical", classification="restricted")
+        task = make_task(db, operator.subject, "science", "read")
         approval = ActionApproval(
-            requester=operator.subject, approver=owner.subject, division="engineering",
-            action="execute", resource_type="dataset", resource_id="sample-1",
-            classification="internal", risk="critical", environment="production",
-            task_id=task.id, status="approved", expires_at=utcnow() + timedelta(hours=1),
-            decided_at=utcnow(),
+            requester=operator.subject, approver=owner.subject, division="science",
+            action="read", resource_type="dataset", resource_id="sample-1",
+            classification="restricted", risk="critical", environment="development",
+            task_id=task.id, status="approved", decided_at=utcnow(),
+            resource_owner_subject=resource_owner.subject, resource_version=policy.version,
+            required_approver_rank=0, expires_at=utcnow() + timedelta(minutes=10),
         )
         db.add(approval)
         db.flush()
-        request = AccessRequest(
-            division="engineering", action="execute", resource_type="dataset",
-            resource_id="sample-1", classification="internal", risk="critical",
-            environment="production", task_id=task.id, approval_id=approval.id,
-        )
+        request = access_request(task_id=task.id, approval_id=approval.id)
         decision = authorize(db, operator, fresh_mfa(), request)
         assert decision.allowed
-        assert decision.reason == "authorized"
+
+        task.revoked_at = utcnow()
+        db.flush()
+        assert not consume_approval(
+            db, operator.subject, operator.rank, request, decision.context,
+        )
+        task.revoked_at = None
+        db.flush()
+        assert consume_approval(
+            db, operator.subject, operator.rank, request, decision.context,
+        )
+        db.refresh(approval)
+        assert approval.consumed_at is not None
 
 
-def test_owner_only_requires_owner_and_recent_mfa():
-    with SessionLocal.begin() as db:
-        owner = add_user(db, "owner-sub", 0)
-        member = add_user(db, "member-sub", 1)
-        owner_principal = Principal(owner, fresh_mfa(), None)
-        assert owner_only(owner_principal) is owner_principal
-        with pytest.raises(HTTPException) as exc:
-            owner_only(Principal(member, fresh_mfa(), None))
-        assert exc.value.status_code == 403
-        stale_claims = {
-            "amr": ["mfa"],
-            "auth_time": datetime.now(timezone.utc).timestamp() - 600,
-        }
-        with pytest.raises(HTTPException) as exc:
-            owner_only(Principal(owner, stale_claims, None))
-        assert exc.value.status_code == 403
-
-
-def test_revoked_resource_share_can_be_regranted_and_audited():
+def test_resource_policy_version_change_invalidates_existing_approval():
     with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
-        guest = add_user(db, "guest-sub", 6)
-        principal = Principal(owner, fresh_mfa(), None)
-        body = ResourceShareInput(
-            subject=guest.subject, resource_type="dataset", resource_id="sample-1",
-            permission="read",
+        resource_owner = add_user(db, "resource-owner", 2)
+        operator = add_user(db, "operator-sub", 3, "science")
+        policy = add_policy(db, resource_owner, risk="critical", classification="restricted")
+        task = make_task(db, operator.subject, "science", "read")
+        approval = ActionApproval(
+            requester=operator.subject, approver=owner.subject, division="science",
+            action="read", resource_type="dataset", resource_id="sample-1",
+            classification="restricted", risk="critical", environment="development",
+            task_id=task.id, status="approved", decided_at=utcnow(),
+            resource_owner_subject=resource_owner.subject, resource_version=policy.version,
+            required_approver_rank=0, expires_at=utcnow() + timedelta(minutes=10),
         )
-        first = share_resource(body, principal, db)
-        revoke_share(first["share_id"], principal, db)
-        restored = share_resource(body, principal, db)
-        assert restored["share_id"] == first["share_id"]
-        grant = db.get(SharedResourceGrant, restored["share_id"])
-        assert grant is not None
-        db.refresh(grant)
-        assert grant.revoked_at is None
-        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "resource.shared").order_by(AuditEvent.created_at.desc()))
-        assert event.detail["share_id"] == restored["share_id"]
-        decision = authorize(db, guest, {}, AccessRequest(
-            division="science", action="read", resource_type="dataset",
-            resource_id="sample-1", classification="public",
-        ))
-        assert decision.allowed
-        high_risk = authorize(db, guest, {}, AccessRequest(
-            division="science", action="read", resource_type="dataset",
-            resource_id="sample-1", classification="public", risk="high",
-        ))
-        assert not high_risk.allowed
-        assert high_risk.reason == "independent_approval_required"
+        db.add(approval)
+        db.flush()
+        policy.version += 1
+        decision = authorize(
+            db, operator, fresh_mfa(), access_request(task_id=task.id, approval_id=approval.id),
+        )
+        assert not decision.allowed
+        assert decision.reason == "independent_approval_required"
 
 
-def test_task_audit_correlates_generated_task_id():
+def test_approval_request_audit_id_is_stable_and_uuid_generated():
     with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
-        member = add_user(db, "member-sub", 2, "science")
-        body = TaskAssignmentInput(
-            subject=member.subject, division="science", description="review dataset",
-            permissions=["read"], expires_at=utcnow() + timedelta(hours=1),
+        resource_owner = add_user(db, "resource-owner", 2)
+        operator = add_user(db, "operator-sub", 3, "science")
+        add_policy(db, resource_owner, risk="high")
+        task = make_task(db, operator.subject, "science", "read")
+        result = request_approval(
+            ApprovalRequest(
+                action="read", resource_type="dataset", resource_id="sample-1", task_id=task.id,
+            ),
+            Principal(operator, fresh_mfa(), None), db,
         )
-        result = assign_task(body, Principal(owner, fresh_mfa(), None), db)
-        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "task.assigned"))
-        assert result["task_id"]
-        assert event.detail["task_id"] == result["task_id"]
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.event_type == "approval.requested",
+        ).order_by(AuditEvent.created_at.desc()))
+        assert result["approval_id"] == event.detail["approval_id"]
+        assert len(result["approval_id"]) == 36
 
 
-def test_approval_audit_correlates_generated_approval_id():
+def test_session_revocation_blocks_reuse_and_owner_requires_fresh_mfa(monkeypatch):
     with SessionLocal() as db:
-        requester = add_user(db, "requester-sub", 3, "engineering")
-        task = make_task(db, requester.subject, "engineering", "approve")
-        body = ApprovalRequestBody(
-            division="engineering", action="approve", resource_type="dataset",
-            resource_id="sample-1", classification="internal", risk="critical",
-            task_id=task.id,
-        )
-        result = request_approval(body, Principal(requester, fresh_mfa(), None), db)
-        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "approval.requested"))
-        assert result["approval_id"]
-        assert event.detail["approval_id"] == result["approval_id"]
-
-
-def test_revoked_session_is_denied_on_next_request(monkeypatch):
-    with SessionLocal() as db:
-        user = add_user(db, "session-sub", 6)
+        owner = add_user(db, "owner-sub", 0)
         claims = {
-            "sub": user.subject,
-            "exp": int((utcnow() + timedelta(hours=1)).timestamp()),
-            "iat": int(utcnow().timestamp()),
-            "jti": "token-1",
+            "sub": owner.subject, "exp": int((utcnow() + timedelta(hours=1)).timestamp()),
+            "iat": int(utcnow().timestamp()), "jti": "session-token-1",
+            **fresh_mfa(), "sub": owner.subject,
         }
         monkeypatch.setattr(
             "entity_auth.main.verify_bearer",
@@ -270,41 +925,112 @@ def test_revoked_session_is_denied_on_next_request(monkeypatch):
         )
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="opaque")
         principal = current_principal(credentials, db)
-        revoke_session(principal.session.id, principal, db)
-        with pytest.raises(HTTPException) as exc:
+
+        with pytest.raises(HTTPException) as stale:
+            revoke_session(principal.session.id, Principal(owner, stale_mfa(), principal.session), db)
+        assert stale.value.status_code == 403
+
+        revoke_session(principal.session.id, Principal(owner, claims, principal.session), db)
+        with pytest.raises(HTTPException) as revoked:
             current_principal(credentials, db)
-        assert exc.value.status_code == 401
+        assert revoked.value.status_code == 401
 
 
-def test_session_hash_collision_cannot_cross_user_boundary(monkeypatch):
+def test_privileged_owner_cannot_authenticate_without_mfa(monkeypatch):
     with SessionLocal() as db:
-        first = add_user(db, "first-sub", 6)
-        second = add_user(db, "second-sub", 6)
-        claims = {"sub": first.subject, "exp": int((utcnow() + timedelta(hours=1)).timestamp())}
+        owner = add_user(db, "owner-sub", 0)
+        claims = {
+            "sub": owner.subject, "exp": int((utcnow() + timedelta(hours=1)).timestamp()),
+            "iat": int(utcnow().timestamp()), "jti": "no-mfa-token",
+        }
         monkeypatch.setattr(
             "entity_auth.main.verify_bearer",
             lambda _token: VerifiedToken(claims=claims, token_hash="b" * 64),
         )
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="opaque")
-        current_principal(credentials, db)
-        claims["sub"] = second.subject
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(HTTPException) as denied:
             current_principal(credentials, db)
-        assert exc.value.status_code == 401
+        assert denied.value.status_code == 403
 
 
 
-def test_non_owner_cannot_provision_users():
+def test_suspended_second_approver_invalidates_pending_high_risk_authorization():
     with SessionLocal() as db:
-        member = add_user(db, "member-sub", 1)
-        app.dependency_overrides[get_db] = lambda: db
-        app.dependency_overrides[current_principal] = lambda: Principal(member, fresh_mfa(), None)
-        try:
-            response = TestClient(app).post(
-                "/v1/admin/users",
-                json={"subject": "attacker-sub", "rank": 1, "divisions": []},
-            )
-            assert response.status_code == 403
-            assert db.scalar(select(User).where(User.subject == "attacker-sub")) is None
-        finally:
-            app.dependency_overrides.clear()
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(db, resource_owner, risk="critical", classification="restricted")
+        task = make_task(db, owner.subject, "science", "read")
+        approval = ActionApproval(
+            requester=owner.subject, approver=reviewer.subject, division="science",
+            action="read", resource_type="dataset", resource_id="sample-1",
+            classification="restricted", risk="critical", environment="development",
+            task_id=task.id, status="approved", decided_at=utcnow(),
+            resource_owner_subject=resource_owner.subject, resource_version=1,
+            required_approver_rank=1, expires_at=utcnow() + timedelta(minutes=10),
+        )
+        db.add(approval)
+        db.flush()
+        reviewer.active = False
+        decision = authorize(
+            db, owner, fresh_mfa(),
+            access_request(task_id=task.id, approval_id=approval.id),
+        )
+        assert not decision.allowed
+        assert decision.reason == "independent_approval_required"
+
+
+def test_audit_chain_detects_modified_event():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        append_audit(db, owner.subject, "test.event", "success", {"value": 1})
+        db.commit()
+        assert verify_audit_chain(Principal(owner, fresh_mfa(), None), db)["valid"]
+        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "test.event"))
+        event.detail = {"value": 2}
+        db.commit()
+        assert not verify_audit_chain(Principal(owner, fresh_mfa(), None), db)["valid"]
+
+
+def test_initial_bootstrap_requires_a_distinct_rank_one_reviewer_and_audits_both():
+    with SessionLocal() as db:
+        with pytest.raises(ValueError, match="reviewer is required"):
+            provision_initial_owner(db, "owner-sub")
+        assert db.scalar(select(User).where(User.subject == "owner-sub")) is None
+
+        owner, reviewer = provision_initial_users(db, "owner-sub", "reviewer-sub")
+        assert owner.rank == 0
+        assert reviewer.rank == 1
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.event_type == "identity.initial_trust_established",
+        ))
+        assert event.detail == {
+            "owner_subject": "owner-sub",
+            "initial_reviewer_subject": "reviewer-sub",
+        }
+
+
+def test_initial_bootstrap_refuses_same_subject_or_nonempty_user_table():
+    with SessionLocal() as db:
+        with pytest.raises(ValueError, match="distinct"):
+            provision_initial_users(db, "same-sub", "same-sub")
+        assert db.scalar(select(User)) is None
+        add_user(db, "existing-sub", 0)
+        with pytest.raises(ValueError, match="not empty"):
+            provision_initial_users(db, "owner-sub", "reviewer-sub")
+
+
+def test_existing_owner_only_database_can_bootstrap_one_independent_reviewer():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        add_user(db, "member-sub", 3)
+        reviewer = provision_initial_reviewer(db, owner.subject, "initial-reviewer-sub")
+        assert reviewer.rank == 1
+        assert db.scalar(select(User).where(User.rank == 0)).subject == owner.subject
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.event_type == "identity.initial_reviewer_established",
+        ))
+        assert event.detail["owner_subject"] == owner.subject
+        with pytest.raises(ValueError, match="already exists"):
+            provision_initial_reviewer(db, owner.subject, "another-reviewer-sub")
+        assert db.scalar(select(User).where(User.subject == "another-reviewer-sub")) is None

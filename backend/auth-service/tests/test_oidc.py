@@ -72,7 +72,28 @@ def test_token_hash_is_scoped_to_issuer_and_subject(signing_key):
     first_hash = oidc.verify_bearer(first).token_hash
     second_hash = oidc.verify_bearer(second).token_hash
     expected = sha256(
-        "https://identity.test.invalid/\0first-sub\0same-jti".encode("utf-8")
+        "https://identity.test.invalid/\0entity-api-tests\0first-sub\0same-jti".encode("utf-8")
     ).hexdigest()
     assert first_hash == expected
     assert first_hash != second_hash
+
+
+
+def test_token_hash_is_bound_to_the_validated_audience(signing_key):
+    token = jwt.encode(
+        claims(aud=["entity-api-tests", "entity-registry"]),
+        signing_key, algorithm="RS256", headers={"kid": "test"},
+    )
+    api_token = oidc.verify_bearer(token, audience="entity-api-tests")
+    registry_token = oidc.verify_bearer(token, audience="entity-registry")
+    assert api_token.claims["sub"] == registry_token.claims["sub"]
+    assert api_token.token_hash != registry_token.token_hash
+    assert api_token.token_hash == sha256(
+        "https://identity.test.invalid/\0entity-api-tests\0user-sub\0opaque-token-id".encode()
+    ).hexdigest()
+
+
+def test_unapproved_jwt_algorithm_is_rejected(signing_key):
+    token = jwt.encode(claims(), "not-a-real-key", algorithm="HS256")
+    with pytest.raises(jwt.PyJWTError):
+        oidc.verify_bearer(token)

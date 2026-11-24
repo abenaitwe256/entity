@@ -27,14 +27,15 @@ def _client() -> PyJWKClient:
     return _jwks
 
 
-def verify_bearer(token: str) -> VerifiedToken:
+def verify_bearer(token: str, *, audience: str | None = None) -> VerifiedToken:
     settings = get_settings()
+    expected_audience = audience or settings.oidc_audience
     signing_key = _client().get_signing_key_from_jwt(token)
     claims = jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256", "ES256"],
-        audience=settings.oidc_audience,
+        audience=expected_audience,
         issuer=settings.oidc_issuer,
         options={"require": ["sub", "exp", "iat", "jti"]},
         leeway=30,
@@ -44,5 +45,5 @@ def verify_bearer(token: str) -> VerifiedToken:
     jti = claims.get("jti")
     if not isinstance(jti, str) or not jti:
         raise jwt.InvalidTokenError("Missing or invalid token ID")
-    token_identity = f"{settings.oidc_issuer}\0{claims['sub']}\0{jti}"
+    token_identity = f"{settings.oidc_issuer}\0{expected_audience}\0{claims['sub']}\0{jti}"
     return VerifiedToken(claims=claims, token_hash=sha256(token_identity.encode("utf-8")).hexdigest())
