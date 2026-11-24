@@ -642,10 +642,8 @@ def test_owner_high_impact_actions_require_independent_approval_and_are_single_u
     action, monkeypatch,
 ):
     # Execute is disabled outside production; use one environment for all designated actions.
-    monkeypatch.setattr(
-        "entity_auth.main.get_settings",
-        lambda: SimpleNamespace(environment="production"),
-    )
+    production_settings = get_settings().model_copy(update={"environment": "production"})
+    monkeypatch.setattr("entity_auth.main.get_settings", lambda: production_settings)
     with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
         reviewer = add_user(db, "reviewer-sub", 1)
