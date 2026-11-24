@@ -637,6 +637,61 @@ def test_owner_cannot_bypass_high_classification_or_irreversible_action_approval
         assert denied_without_approval.reason == "independent_approval_required"
 
 
+@pytest.mark.parametrize("action", ["execute", "administer", "revoke"])
+def test_owner_high_impact_actions_require_independent_approval_and_are_single_use(
+    action, monkeypatch,
+):
+    # Execute is disabled outside production; use one environment for all designated actions.
+    monkeypatch.setattr(
+        "entity_auth.main.get_settings",
+        lambda: SimpleNamespace(environment="production"),
+    )
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(db, resource_owner, resource_id="action-target", risk="low")
+        task = make_task(
+            db, owner.subject, "science", action,
+            resource_id="action-target",
+        )
+        request = AccessRequest(
+            action=action, resource_type="dataset", resource_id="action-target",
+            environment="production", task_id=task.id,
+        )
+
+        denied = authorize(db, owner, fresh_mfa(), request)
+        assert not denied.allowed
+        assert denied.reason == "independent_approval_required"
+
+        pending = request_approval(
+            ApprovalRequest(
+                action=action, resource_type="dataset", resource_id="action-target",
+                task_id=task.id,
+            ),
+            Principal(owner, fresh_mfa(), None),
+            db,
+        )
+        approval = db.get(ActionApproval, pending["approval_id"])
+        assert approval.required_approver_rank == 1
+        decision = decide_approval(approval.id, Principal(reviewer, fresh_mfa(), None), db)
+        assert decision["status"] == "approved"
+        assert approval.approver == reviewer.subject
+
+        body = AccessCheck(
+            action=action, resource_type="dataset", resource_id="action-target",
+            task_id=task.id, approval_id=approval.id,
+        )
+        allowed = access_check(body, Principal(owner, fresh_mfa(), None), db)
+        assert allowed["allowed"]
+        db.refresh(approval)
+        assert approval.consumed_at is not None
+
+        replay = access_check(body, Principal(owner, fresh_mfa(), None), db)
+        assert not replay["allowed"]
+        assert replay["reason"] == "approval_expired_revoked_or_consumed"
+
+
 def test_forged_action_approval_without_fresh_independent_decision_is_denied():
     with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
