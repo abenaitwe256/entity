@@ -15,20 +15,22 @@ This is a security foundation for the ENTITY backend. It is not a production-rea
 | Sessions | Only an issuer/audience/subject/JTI digest is stored; expiry and revocation are checked; suspending a user revokes sessions | Session collision and revocation tests | Idle timeout, cleanup, refresh-token flow and in-flight request cancellation |
 | Audit | HMAC-linked records, serialized PostgreSQL append and Owner verification endpoint | Tampering and generated-ID correlation tests | External checkpoints/WORM retention, key IDs and tested key rotation; tail deletion alone is not detectable |
 | Database | Versioned Alembic upgrade replaces bootstrap create_all; migration is additive and forward-only | GitHub Actions applies it to PostgreSQL before tests | Staging rehearsal, backup/restore drill, monitoring and operational rollback procedure |
+| Protected operations | A point-of-use metadata read rechecks locked account, resource, task, membership and share state; consumes approval and audits before returning | Approval replay, cross-division denial, response redaction and audit outcomes | Domain content, health, financial and device-control handlers are not implemented |
+| Staging validation | Provider-neutral OIDC/JWKS and API-token smoke checker | Discovery mismatch, algorithm/key compatibility, malformed-key and signing-use tests | No provider or staging URL is provisioned; no live check has run |
 
 ## Request flow
 
 1. The browser or native app authenticates with the configured OIDC provider. Use Authorization Code with PKCE for a public client. The provider owns passwords, MFA enrollment, and account recovery.
 2. The client sends the provider-issued access token to the API as Authorization: Bearer.
 3. The service checks the token signature, fixed issuer/audience, expiry, issue time, subject and JTI; looks up the exact provisioned subject; enforces MFA for privileged ranks; and checks a revocable session record.
-4. The service accepts only an action, resource type/ID and optional task/approval references at POST /v1/access/check. It loads division, classification, risk, owner and policy version from entity_resource_policies. Client-supplied authorization context is rejected.
+4. Clients send only a requested action, resource reference and optional task/approval references. The service loads division, classification, risk, owner and policy version from entity_resource_policies. Client-supplied authorization context is rejected. POST /v1/access/check returns a decision only; the implemented metadata handler is the only protected product read.
 5. The policy checks active account, division membership, exact resource ownership, an active task or a read-only share. It denies unknown resources, mismatches, revoked grants and insufficient rank.
 6. High/critical-risk or highly restricted access, plus execute/administer/revoke actions, requires recent MFA, an active scoped task, and a distinct eligible approver. Owner requests require an active Rank 1 reviewer; other requests require the Owner. Approval is bound to the exact server policy version and can be consumed once.
 7. Administrative changes use a separate two-person flow: the Owner requests a canonical change with fresh MFA; a different active Rank 1 reviewer with fresh MFA approves or rejects it; then the Owner re-authenticates and executes that exact change once. Owner rank, suspension and recovery cannot be changed through these routes.
 
 ## Important enforcement boundary
 
-POST /v1/access/check returns an authorization decision. It is not a protected data or operation handler. The current repository has no authoritative product backend that executes a read, mutation, device command, financial action or other protected effect in the same transaction as this decision. Do not expose sensitive data or operations by relying on this endpoint alone. Each future handler must load canonical resource state, invoke the policy, consume any approval, perform the protected operation, and write the audit event atomically.
+POST /v1/access/check returns a policy decision and is not a data or operation handler. The service now includes a narrow reference product handler, GET /v1/resources/{resource_type}/{resource_id}/metadata. It locks and rechecks canonical resource policy, consumes any approval, audits the result and commits before returning metadata. Administrative account, task and share mutations likewise run through payload-bound two-person authorization. No resource-content, health, financial, device-control or other domain operation is implemented. Do not expose those sensitive capabilities until each domain handler loads canonical state, authorizes and consumes any approval, performs the operation, and audits it in one transaction.
 
 The resource policy write endpoint is internal. It accepts tokens only for a configured audience and exact allow-listed OIDC subjects that are provisioned as active rank-6 service accounts. The service trusts this backend registry to report correct ownership, division, classification and risk. That registry has not yet been integrated with the browser prototype or deployed.
 
@@ -52,16 +54,20 @@ uvicorn entity_auth.main:app --host 127.0.0.1 --port 8080
 
 The bootstrap command applies Alembic migrations. On a new database it provisions the exact Owner subject as Rank 0 and a different reviewer subject as Rank 1, then records both in the HMAC audit chain. On an existing database it can add one initial active Rank 1 reviewer only when the named Owner is active and no active Rank 1 reviewer exists. This is a one-time deployment-operator trust ceremony because the two-person rule cannot approve its own first reviewer; after that, only an Owner-requested, independently approved change can add or alter accounts. Never include an actual password, API key, bearer token or audit key in source control, logs, CI configuration or issue text.
 
+## Proposed Keycloak staging validation
+
+Keycloak is proposed but not provisioned. Use the [staging setup checklist](../../docs/ENTITY_KEYCLOAK_STAGING.md) and run python -m entity_auth.staging after the issuer, API URL and protected staging tokens exist. No live validation has been performed.
+
 ## Integration plan for the browser prototype
 
 See [ENTITY browser authentication integration](../../docs/ENTITY_AUTH_BROWSER_INTEGRATION.md). In short: keep the static XR prototype public and non-sensitive until there is a trusted application backend. Add OIDC Authorization Code + PKCE, an authenticated identity/session view, and then server-owned action handlers. The browser must not decide rank, resource ownership, division, classification, risk or approval eligibility.
 
 ## Known limitations and deployment blockers
 
-- The auth service and the XR browser prototype are not wired together. No OIDC provider or resource registry is configured in this repository.
-- The access endpoint does not execute a protected operation atomically. Sensitive product features remain disabled until a trusted backend enforces each decision at the point of use.
-- The CI OIDC tests use a generated RSA key and mocked JWKS client; the real provider's issuer, audience, MFA amr/auth_time semantics, key rotation and logout behavior are not verified.
-- Production access requires a trusted resource-registry workload, verified PostgreSQL TLS, managed secrets, backups, monitoring and deployment-specific network controls.
+- No OIDC provider or resource registry is provisioned. Keycloak is the proposed provider, not a configured integration.
+- POST /v1/access/check returns a policy decision. The service now has a narrow protected metadata-read handler that rechecks locked policy, consumes approval and audits before returning canonical metadata. No resource-content, health, financial, device-control or other domain operation is implemented.
+- CI uses generated RSA keys and mocked JWKS. Provider issuer, audience, MFA amr/auth_time semantics, key rotation and logout behavior remain unverified. A provider-neutral staging smoke checker is available in entity_auth.staging but has not been run because no staging issuer or API URL is provisioned.
+- Staging and production require PostgreSQL sslmode=verify-full and a configured trusted resource-registry audience and subject allowlist.
 - Session expiry follows the OIDC access-token expiry. There is no refresh flow, idle timeout, expired-session cleanup or cancellation of requests already in flight.
 - The audit chain detects modifications and interior gaps when checked with the external HMAC key. It cannot detect deletion of the newest tail without an independent external checkpoint. Key rotation and WORM/external anchoring are not implemented.
 - The Alembic revision is forward-only because dropping authorization/audit tables is destructive. Restore from a verified backup rather than downgrading. Production rollout still needs a staging rehearsal and restore validation.

@@ -34,6 +34,29 @@ def test_partial_resource_registry_configuration_is_rejected():
         settings(resource_registry_audience="entity-registry")
 
 
+def test_staging_requires_verified_postgres_tls_and_trusted_registry():
+    with pytest.raises(ValidationError):
+        settings(
+            environment="staging",
+            resource_registry_audience="entity-registry",
+            resource_registry_subjects="entity-resource-registry",
+        )
+    with pytest.raises(ValidationError):
+        settings(
+            environment="staging",
+            database_url="postgresql+psycopg://entity@db.example.test/entity?sslmode=verify-full",
+        )
+
+    staging = settings(
+        environment="staging",
+        database_url="postgresql+psycopg://entity@db.example.test/entity?sslmode=verify-full",
+        resource_registry_audience="entity-registry",
+        resource_registry_subjects="entity-resource-registry",
+    )
+    assert staging.environment == "staging"
+    assert staging.trusted_resource_registry_subjects == frozenset({"entity-resource-registry"})
+
+
 def test_production_requires_verified_postgres_tls_and_trusted_registry():
     with pytest.raises(ValidationError):
         settings(

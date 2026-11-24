@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from uuid import uuid4
 
 import jwt
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Path, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, text, update
@@ -145,6 +145,65 @@ def owner_only(principal: Annotated[Principal, Depends(current_principal)]) -> P
     if not has_recent_step_up(principal.claims):
         raise HTTPException(status_code=403, detail="Recent MFA authentication is required")
     return principal
+
+
+
+def _authorize_at_point_of_use(
+    db: Session, principal: Principal, request: AccessRequest
+) -> Decision:
+    """Recheck and consume policy under locks held through the protected operation's commit."""
+    decision = authorize(db, principal.user, principal.claims, request)
+    if not decision.allowed or not decision.context:
+        return decision
+
+    current_user = db.scalar(
+        select(User).where(User.subject == principal.user.subject)
+        .with_for_update().execution_options(populate_existing=True)
+    )
+    if not current_user or not current_user.active:
+        return Decision(False, "account_disabled")
+    principal.user = current_user
+
+    policy = db.scalar(
+        select(ResourcePolicy).where(
+            ResourcePolicy.resource_type == request.resource_type,
+            ResourcePolicy.resource_id == request.resource_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if not policy:
+        return Decision(False, "resource_not_registered")
+
+    if request.task_id:
+        db.scalar(
+            select(TaskAssignment).where(TaskAssignment.id == request.task_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+    db.scalar(
+        select(DivisionMembership).where(
+            DivisionMembership.subject == principal.user.subject,
+            DivisionMembership.division == policy.division,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if request.action == "read":
+        db.scalar(
+            select(SharedResourceGrant).where(
+                SharedResourceGrant.subject == principal.user.subject,
+                SharedResourceGrant.resource_type == request.resource_type,
+                SharedResourceGrant.resource_id == request.resource_id,
+                SharedResourceGrant.permission == "read",
+            ).with_for_update().execution_options(populate_existing=True)
+        )
+
+    # Refresh after locks: task, membership, share, account or policy changes cannot
+    # slip between the final decision, approval consumption, protected effect and audit.
+    decision = authorize(db, principal.user, principal.claims, request)
+    if not decision.allowed or not decision.context:
+        return decision
+    if requires_independent_approval(request, decision.context) and not consume_approval(
+        db, principal.user.subject, principal.user.rank, request, decision.context
+    ):
+        return Decision(False, "approval_expired_revoked_or_consumed", decision.context)
+    return decision
 
 
 class AccessCheck(BaseModel):
@@ -451,13 +510,9 @@ def access_check(
         approval_id=body.approval_id,
         environment=get_settings().environment,
     )
-    decision = authorize(db, principal.user, principal.claims, request)
+    decision = _authorize_at_point_of_use(db, principal, request)
     allowed, reason = decision.allowed, decision.reason
     context = decision.context
-    if allowed and context and requires_independent_approval(request, context):
-        allowed = consume_approval(db, principal.user.subject, principal.user.rank, request, context)
-        if not allowed:
-            reason = "approval_expired_revoked_or_consumed"
     detail = {
         "action": body.action, "resource_type": body.resource_type,
         "resource_id": body.resource_id, "reason": reason,
@@ -716,6 +771,53 @@ def request_approval(
 
 
 
+@app.get("/v1/resources/{resource_type}/{resource_id}/metadata")
+def read_resource_metadata(
+    resource_type: Annotated[str, Path(min_length=1, max_length=80)],
+    resource_id: Annotated[str, Path(min_length=1, max_length=255)],
+    principal: Annotated[Principal, Depends(current_principal)],
+    db: Annotated[Session, Depends(get_db)],
+    task_id: str | None = Query(default=None, max_length=36),
+    approval_id: str | None = Query(default=None, max_length=36),
+):
+    request = AccessRequest(
+        action="read", resource_type=resource_type, resource_id=resource_id,
+        task_id=task_id, approval_id=approval_id, environment=get_settings().environment,
+    )
+    decision = _authorize_at_point_of_use(db, principal, request)
+    allowed = decision.allowed and decision.context is not None
+    detail = {
+        "action": "read", "resource_type": resource_type, "resource_id": resource_id,
+        "reason": decision.reason,
+    }
+    if decision.context:
+        detail.update({
+            "division": decision.context.division,
+            "classification": decision.context.classification,
+            "risk": decision.context.risk,
+            "resource_owner_subject": decision.context.resource_owner_subject,
+            "resource_version": decision.context.version,
+        })
+    append_audit(
+        db, principal.user.subject, "resource.metadata.read",
+        "allow" if allowed else "deny", detail,
+    )
+    db.commit()
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Resource metadata access denied")
+
+    context = decision.context
+    return {
+        "resource_type": context.resource_type,
+        "resource_id": context.resource_id,
+        "owner_subject": context.resource_owner_subject,
+        "division": context.division,
+        "classification": context.classification,
+        "risk": context.risk,
+        "policy_version": context.version,
+    }
+
+
 @app.get("/v1/approvals/pending")
 def pending_approvals(
     principal: Annotated[Principal, Depends(current_principal)],
@@ -803,6 +905,15 @@ def reject_approval(
     db.commit()
     return {"approval_id": approval_id, "status": "rejected"}
 
+
+
+@app.get("/v1/internal/resource-registry/verify")
+def verify_resource_registry_identity(
+    principal: Annotated[Principal, Depends(resource_registry_principal)],
+):
+    # Keep the response redacted; successful authentication proves the configured
+    # audience, allow-listed subject and active rank-6 service account all matched.
+    return {"status": "ok"}
 
 
 @app.put("/v1/internal/resource-policies")

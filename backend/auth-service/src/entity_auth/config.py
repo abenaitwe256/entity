@@ -94,12 +94,12 @@ class Settings(BaseSettings):
                 "Configure both ENTITY_RESOURCE_REGISTRY_AUDIENCE and "
                 "ENTITY_RESOURCE_REGISTRY_SUBJECTS, or leave both unset"
             )
-        if self.environment == "production":
+        if self.environment in {"staging", "production"}:
             sslmode = parse_qs(urlsplit(self.database_url).query).get("sslmode", [])
             if sslmode != ["verify-full"]:
-                raise ValueError("Production PostgreSQL connections must use sslmode=verify-full")
+                raise ValueError("Staging and production PostgreSQL connections must use sslmode=verify-full")
             if not has_audience:
-                raise ValueError("Production requires a dedicated trusted resource-registry identity")
+                raise ValueError("Staging and production require a dedicated trusted resource-registry identity")
         return self
 
     @property

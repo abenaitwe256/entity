@@ -689,6 +689,123 @@ def test_owner_high_impact_actions_require_independent_approval_and_are_single_u
         assert not replay["allowed"]
 
 
+
+def test_authoritative_metadata_read_consumes_independent_approval_once_and_audits():
+    with SessionLocal() as db:
+        owner = add_user(db, "owner-sub", 0)
+        reviewer = add_user(db, "reviewer-sub", 1)
+        resource_owner = add_user(db, "resource-owner", 2)
+        add_policy(db, resource_owner, classification="restricted", risk="critical")
+        task = make_task(db, owner.subject, "science", "read")
+
+        pending = request_approval(
+            ApprovalRequest(
+                action="read", resource_type="dataset", resource_id="sample-1",
+                task_id=task.id,
+            ),
+            Principal(owner, fresh_mfa(), None),
+            db,
+        )
+        approval = db.get(ActionApproval, pending["approval_id"])
+        decision = decide_approval(approval.id, Principal(reviewer, fresh_mfa(), None), db)
+        assert decision["status"] == "approved"
+
+        path = "/v1/resources/dataset/sample-1/metadata"
+        params = {"task_id": task.id, "approval_id": approval.id}
+        response = api_as(db, owner, fresh_mfa(), "get", path, params=params)
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "resource_type": "dataset", "resource_id": "sample-1",
+            "owner_subject": resource_owner.subject, "division": "science",
+            "classification": "restricted", "risk": "critical", "policy_version": 1,
+        }
+        db.refresh(approval)
+        assert approval.consumed_at is not None
+
+        replay = api_as(db, owner, fresh_mfa(), "get", path, params=params)
+        assert replay.status_code == 403
+        assert replay.json() == {"detail": "Resource metadata access denied"}
+        events = db.scalars(select(AuditEvent).where(
+            AuditEvent.actor == owner.subject,
+            AuditEvent.event_type == "resource.metadata.read",
+        )).all()
+        assert sorted(event.outcome for event in events) == ["allow", "deny"]
+
+
+def test_authoritative_metadata_read_denies_cross_division_without_exposing_policy():
+    with SessionLocal() as db:
+        resource_owner = add_user(db, "resource-owner", 2)
+        outsider = add_user(db, "outsider-sub", 3, "engineering")
+        add_policy(db, resource_owner, division="science")
+
+        response = api_as(
+            db, outsider, fresh_mfa(), "get",
+            "/v1/resources/dataset/sample-1/metadata",
+        )
+        assert response.status_code == 403
+        assert response.json() == {"detail": "Resource metadata access denied"}
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.actor == outsider.subject,
+            AuditEvent.event_type == "resource.metadata.read",
+        ).order_by(AuditEvent.created_at.desc()))
+        assert event.outcome == "deny"
+
+
+def test_client_cannot_supply_authoritative_policy_context():
+    with SessionLocal() as db:
+        owner = add_user(db, "resource-owner", 2)
+        policy = add_policy(
+            db, owner, classification="internal", risk="moderate",
+        )
+        response = api_as(
+            db, owner, fresh_mfa(), "get",
+            "/v1/resources/dataset/sample-1/metadata",
+            params={
+                "owner_subject": "attacker-sub",
+                "classification": "public",
+                "risk": "low",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "resource_type": "dataset",
+            "resource_id": "sample-1",
+            "owner_subject": policy.owner_subject,
+            "division": policy.division,
+            "classification": policy.classification,
+            "risk": policy.risk,
+            "policy_version": policy.version,
+        }
+
+        forged_check = api_as(
+            db, owner, fresh_mfa(), "post", "/v1/access/check",
+            json={
+                "action": "read",
+                "resource_type": "dataset",
+                "resource_id": "sample-1",
+                "owner_subject": "attacker-sub",
+                "classification": "public",
+                "risk": "low",
+            },
+        )
+        assert forged_check.status_code == 422
+
+
+def test_resource_registry_verification_endpoint_fails_closed_when_unconfigured(monkeypatch):
+    with SessionLocal() as db:
+        settings_without_registry = get_settings().model_copy(
+            update={"resource_registry_audience": None, "resource_registry_subjects": ""},
+        )
+        monkeypatch.setattr("entity_auth.main.get_settings", lambda: settings_without_registry)
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:
+                response = client.get("/v1/internal/resource-registry/verify")
+        finally:
+            app.dependency_overrides.clear()
+        assert response.status_code == 503
+
+
 def test_forged_action_approval_without_fresh_independent_decision_is_denied():
     with SessionLocal() as db:
         owner = add_user(db, "owner-sub", 0)
