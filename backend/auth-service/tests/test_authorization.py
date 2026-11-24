@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import uuid4
 from types import SimpleNamespace
 
 import pytest
@@ -8,11 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from entity_auth.config import get_settings
-from entity_auth.bootstrap_owner import (
-    provision_initial_owner, provision_initial_reviewer, provision_initial_users,
-)
 from entity_auth.db import (
-    ActionApproval, AdminChange, AuditEvent, DivisionMembership, ResourcePolicy, SessionLocal,
+    ActionApproval, AdminChange, AuditEvent, DivisionMembership, OriginalOwnerIdentity,
+    ORIGINAL_OWNER_KEY, ResourcePolicy, SessionLocal,
     SharedResourceGrant, TaskAssignment, User, utcnow,
 )
 from entity_auth.main import (
@@ -29,6 +28,16 @@ def add_user(db, subject, rank, division=None, active=True):
     user = User(subject=subject, rank=rank, active=active, created_by="test")
     db.add(user)
     db.flush()
+    if rank == 0 and subject == get_settings().original_owner_subject:
+        db.add(OriginalOwnerIdentity(
+            identity_key=ORIGINAL_OWNER_KEY,
+            identity_id=str(uuid4()),
+            owner_user_id=user.id,
+            oidc_issuer=get_settings().oidc_issuer,
+            oidc_subject=subject,
+            created_by="test",
+        ))
+        db.flush()
     if division:
         db.add(DivisionMembership(subject=subject, division=division, assigned_by="test"))
         db.flush()
@@ -72,8 +81,13 @@ def stale_mfa():
 
 
 def api_as(db, user, claims, method, path, **kwargs):
+    identity = db.scalar(select(OriginalOwnerIdentity).where(
+        OriginalOwnerIdentity.owner_user_id == user.id,
+    )) if user.rank == 0 else None
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[current_principal] = lambda: Principal(user, claims, None)
+    app.dependency_overrides[current_principal] = lambda: Principal(
+        user, claims, None, identity.identity_id if identity else None,
+    )
     try:
         with TestClient(app) as client:
             return getattr(client, method)(path, **kwargs)
@@ -990,47 +1004,3 @@ def test_audit_chain_detects_modified_event():
         event.detail = {"value": 2}
         db.commit()
         assert not verify_audit_chain(Principal(owner, fresh_mfa(), None), db)["valid"]
-
-
-def test_initial_bootstrap_requires_a_distinct_rank_one_reviewer_and_audits_both():
-    with SessionLocal() as db:
-        with pytest.raises(ValueError, match="reviewer is required"):
-            provision_initial_owner(db, "owner-sub")
-        assert db.scalar(select(User).where(User.subject == "owner-sub")) is None
-
-        owner, reviewer = provision_initial_users(db, "owner-sub", "reviewer-sub")
-        assert owner.rank == 0
-        assert reviewer.rank == 1
-        event = db.scalar(select(AuditEvent).where(
-            AuditEvent.event_type == "identity.initial_trust_established",
-        ))
-        assert event.detail == {
-            "owner_subject": "owner-sub",
-            "initial_reviewer_subject": "reviewer-sub",
-        }
-
-
-def test_initial_bootstrap_refuses_same_subject_or_nonempty_user_table():
-    with SessionLocal() as db:
-        with pytest.raises(ValueError, match="distinct"):
-            provision_initial_users(db, "same-sub", "same-sub")
-        assert db.scalar(select(User)) is None
-        add_user(db, "existing-sub", 0)
-        with pytest.raises(ValueError, match="not empty"):
-            provision_initial_users(db, "owner-sub", "reviewer-sub")
-
-
-def test_existing_owner_only_database_can_bootstrap_one_independent_reviewer():
-    with SessionLocal() as db:
-        owner = add_user(db, "owner-sub", 0)
-        add_user(db, "member-sub", 3)
-        reviewer = provision_initial_reviewer(db, owner.subject, "initial-reviewer-sub")
-        assert reviewer.rank == 1
-        assert db.scalar(select(User).where(User.rank == 0)).subject == owner.subject
-        event = db.scalar(select(AuditEvent).where(
-            AuditEvent.event_type == "identity.initial_reviewer_established",
-        ))
-        assert event.detail["owner_subject"] == owner.subject
-        with pytest.raises(ValueError, match="already exists"):
-            provision_initial_reviewer(db, owner.subject, "another-reviewer-sub")
-        assert db.scalar(select(User).where(User.subject == "another-reviewer-sub")) is None

@@ -68,3 +68,14 @@ The current XR code is static and does not authenticate users or call the Python
 Administrative mutations require an Owner with recent MFA, an independent Rank 1 reviewer, and exact payload-bound one-time approval. High/critical-risk or highly restricted access, and execute/administer/revoke actions, require a scoped task, recent MFA and an independent eligible approver. These service routes are covered by automated regression tests. The service also has a narrow metadata-reference read handler over the trusted resource-policy record; it does not read product content or cause external effects. Future domain handlers must load canonical product state, re-check authorization, consume approval, perform the protected effect and audit it in one secure transaction.
 
 The service is not production-ready. No identity provider, resource registry or deployment is configured. Provider-specific claim mapping, operational monitoring, secret rotation, audit anchoring, recovery drills, and the browser integration remain incomplete. See [the browser integration plan](ENTITY_AUTH_BROWSER_INTEGRATION.md) and [service status](../backend/auth-service/README.md).
+
+
+## Original Owner identity boundary
+
+ENTITY governance designates Abenaitwe Dickson, born in Uganda, as the Original Founder and Owner with the highest governing Owner authority. Those descriptors are governance documentation only; they are not authentication factors or recovery evidence.
+
+The auth service binds the configured OIDC issuer and pinned subject to one generated, immutable internal UUID and one exact Rank 0 account. OIDC token verification establishes the authenticated subject; controlled out-of-band identity proofing establishes whether that subject belongs to the designated human. Authorization then independently requires the bound account, required MFA/step-up, scoped policy, any independent approval and audit. There is no hardcoded Owner password, account transfer endpoint or alternate recovery identity. See [ENTITY governance](ENTITY_GOVERNANCE.md), [Owner recovery](ENTITY_OWNER_RECOVERY.md), and [the dashboard plan](ENTITY_OWNER_DASHBOARD.md).
+
+The Owner bootstrap is an operator-run, replay-guarded transaction that requires verified tokens and fresh MFA for both the pinned Owner and pinned independent reviewer. The database migration protects the anchor and bound user with immutable PostgreSQL triggers. Recovery keeps the same issuer and subject; if they cannot be recovered, Owner-only actions remain unavailable. Live provider identity proofing, a recovery drill, runtime/migration database role separation and protection against a fully privileged database operator remain unvalidated.
+
+ENTITY uses all 14 divisions listed in [the consolidated division register](ENTITY_DIVISION_REGISTER.md). The auth policy recognizes the same 14 lowercase identifiers; the former eight-division policy/blueprint set was incomplete.

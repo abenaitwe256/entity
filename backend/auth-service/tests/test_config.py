@@ -10,6 +10,8 @@ BASE = {
     "oidc_jwks_url": "https://identity.example.test/.well-known/jwks.json",
     "database_url": "postgresql+psycopg://entity@localhost:5432/entity",
     "audit_hmac_key": "x" * 48,
+    "original_owner_subject": "owner-sub",
+    "original_owner_bootstrap_reviewer_subject": "reviewer-sub",
 }
 
 
@@ -34,7 +36,7 @@ def test_partial_resource_registry_configuration_is_rejected():
         settings(resource_registry_audience="entity-registry")
 
 
-def test_staging_requires_verified_postgres_tls_and_trusted_registry():
+def test_staging_requires_verified_postgres_tls_registry_and_pinned_owner():
     with pytest.raises(ValidationError):
         settings(
             environment="staging",
@@ -45,6 +47,15 @@ def test_staging_requires_verified_postgres_tls_and_trusted_registry():
         settings(
             environment="staging",
             database_url="postgresql+psycopg://entity@db.example.test/entity?sslmode=verify-full",
+        )
+
+    with pytest.raises(ValidationError, match="pinned ENTITY_ORIGINAL_OWNER_SUBJECT"):
+        settings(
+            environment="staging",
+            database_url="postgresql+psycopg://entity@db.example.test/entity?sslmode=verify-full",
+            resource_registry_audience="entity-registry",
+            resource_registry_subjects="entity-resource-registry",
+            original_owner_subject=None,
         )
 
     staging = settings(
@@ -69,6 +80,15 @@ def test_production_requires_verified_postgres_tls_and_trusted_registry():
         settings(
             environment="production",
             database_url="postgresql+psycopg://entity@db.example.test/entity?sslmode=verify-full",
+        )
+
+    with pytest.raises(ValidationError, match="pinned ENTITY_ORIGINAL_OWNER_SUBJECT"):
+        settings(
+            environment="production",
+            database_url="postgresql+psycopg://entity@db.example.test/entity?sslmode=verify-full",
+            resource_registry_audience="entity-registry",
+            resource_registry_subjects="entity-resource-registry",
+            original_owner_subject=None,
         )
 
     production = settings(

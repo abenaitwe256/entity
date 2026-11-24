@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text,
-    UniqueConstraint, create_engine, text,
+    DDL, UniqueConstraint, create_engine, event, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -37,6 +37,34 @@ class User(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     created_by: Mapped[str | None] = mapped_column(String(255))
+
+
+ORIGINAL_OWNER_KEY = "original-founder"
+
+
+class OriginalOwnerIdentity(Base):
+    """Immutable binding between the designated Founder and one verified OIDC identity."""
+
+    __tablename__ = "entity_original_owner_identity"
+    __table_args__ = (
+        CheckConstraint(
+            "identity_key = 'original-founder'",
+            name="ck_original_owner_identity_singleton",
+        ),
+        UniqueConstraint("identity_id", name="uq_original_owner_identity_id"),
+        UniqueConstraint("owner_user_id", name="uq_original_owner_user"),
+        UniqueConstraint("oidc_issuer", "oidc_subject", name="uq_original_owner_oidc_identity"),
+    )
+
+    identity_key: Mapped[str] = mapped_column(String(32), primary_key=True, default=ORIGINAL_OWNER_KEY)
+    identity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("entity_users.id", ondelete="RESTRICT"), nullable=False,
+    )
+    oidc_issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    oidc_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
 class DivisionMembership(Base):
@@ -181,6 +209,91 @@ class AuditEvent(Base):
     detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     event_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+
+_ORIGINAL_OWNER_IDENTITY_INSERT_GUARD = DDL(
+    """
+    CREATE OR REPLACE FUNCTION entity_validate_original_owner_identity()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+        owner_rank integer;
+        owner_subject text;
+    BEGIN
+        SELECT rank, subject INTO owner_rank, owner_subject
+        FROM entity_users WHERE id = NEW.owner_user_id FOR UPDATE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Original Owner account does not exist'
+                USING ERRCODE = '42501';
+        END IF;
+        IF owner_rank <> 0 OR owner_subject <> NEW.oidc_subject THEN
+            RAISE EXCEPTION 'Owner anchor must match a Rank 0 account and its OIDC subject'
+                USING ERRCODE = '42501';
+        END IF;
+        RETURN NEW;
+    END;
+    $$
+    """
+).execute_if(dialect="postgresql")
+_ORIGINAL_OWNER_IDENTITY_INSERT_TRIGGER = DDL(
+    """
+    CREATE TRIGGER entity_original_owner_identity_insert_guard
+    BEFORE INSERT ON entity_original_owner_identity
+    FOR EACH ROW EXECUTE FUNCTION entity_validate_original_owner_identity()
+    """
+).execute_if(dialect="postgresql")
+
+_ORIGINAL_OWNER_ANCHOR_GUARD = DDL(
+    """
+    CREATE OR REPLACE FUNCTION entity_reject_original_owner_anchor_change()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        RAISE EXCEPTION 'Original Owner identity binding is immutable'
+            USING ERRCODE = '42501';
+    END;
+    $$
+    """
+).execute_if(dialect="postgresql")
+_ORIGINAL_OWNER_ANCHOR_TRIGGER = DDL(
+    """
+    CREATE TRIGGER entity_original_owner_anchor_immutable
+    BEFORE UPDATE OR DELETE ON entity_original_owner_identity
+    FOR EACH ROW EXECUTE FUNCTION entity_reject_original_owner_anchor_change()
+    """
+).execute_if(dialect="postgresql")
+_ORIGINAL_OWNER_ACCOUNT_GUARD = DDL(
+    """
+    CREATE OR REPLACE FUNCTION entity_protect_original_owner_account()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM entity_original_owner_identity
+            WHERE owner_user_id = OLD.id
+        ) THEN
+            RAISE EXCEPTION 'Original Owner account cannot be modified or deleted'
+                USING ERRCODE = '42501';
+        END IF;
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+        RETURN NEW;
+    END;
+    $$
+    """
+).execute_if(dialect="postgresql")
+_ORIGINAL_OWNER_ACCOUNT_TRIGGER = DDL(
+    """
+    CREATE TRIGGER entity_original_owner_account_immutable
+    BEFORE UPDATE OR DELETE ON entity_users
+    FOR EACH ROW EXECUTE FUNCTION entity_protect_original_owner_account()
+    """
+).execute_if(dialect="postgresql")
+
+event.listen(OriginalOwnerIdentity.__table__, "after_create", _ORIGINAL_OWNER_IDENTITY_INSERT_GUARD)
+event.listen(OriginalOwnerIdentity.__table__, "after_create", _ORIGINAL_OWNER_IDENTITY_INSERT_TRIGGER)
+event.listen(OriginalOwnerIdentity.__table__, "after_create", _ORIGINAL_OWNER_ANCHOR_GUARD)
+event.listen(OriginalOwnerIdentity.__table__, "after_create", _ORIGINAL_OWNER_ANCHOR_TRIGGER)
+event.listen(OriginalOwnerIdentity.__table__, "after_create", _ORIGINAL_OWNER_ACCOUNT_GUARD)
+event.listen(OriginalOwnerIdentity.__table__, "after_create", _ORIGINAL_OWNER_ACCOUNT_TRIGGER)
 
 
 engine = create_engine(get_settings().database_url, pool_pre_ping=True, pool_recycle=1800)

@@ -91,25 +91,31 @@ A phone camera alone cannot reveal all internal biological events in real time. 
 
 ## ENTITY division structure
 
-ENTITY is organized into eight interconnected divisions coordinated by one central intelligence. Each division owns a specialist responsibility while sharing permissioned tools, context, data provenance, and safety policies.
+ENTITY is one unified ecosystem with 14 permanent, interconnected divisions coordinated by central services. The complete authoritative register and identifiers are in [ENTITY_DIVISION_REGISTER.md](ENTITY_DIVISION_REGISTER.md). The table below summarizes the same full set; it does not add, remove, merge or rename divisions.
 
 | Division | Primary responsibility |
 |---|---|
-| **ENTITY MIND** | Intelligence, reasoning, knowledge, planning, memory, research coordination, and communication. |
-| **ENTITY REALITY** | Augmented reality, immersive 3D worlds, spatial computing, digital characters, projection, and human interaction. |
-| **ENTITY HUMAN** | Human biology, medicine, genetics, physiology, neuroscience, neural technology, and consent-based health intelligence. |
-| **ENTITY SCIENCE** | Physics, mathematics, chemistry, astronomy, scientific research, modelling, and reproducible simulations. |
-| **ENTITY ENGINEERING** | Inventions, aerospace and general engineering, robotics, automation, materials science, and prototype development. |
-| **ENTITY SPACE** | Satellites, spacecraft, orbital systems, space missions, astronomy data, and authorized space-system interaction. |
-| **ENTITY PLANET** | Earth intelligence, global sensing, environmental monitoring, geospatial data, climate, oceans, and disaster intelligence. |
-| **ENTITY FUTURE** | Prediction, discovery, scenario modelling, autonomous innovation, and long-term technology exploration. |
+| **ENTITY MIND** | Intelligence, reasoning and knowledge. |
+| **ENTITY REALITY** | AR, VR, MR, 3D environments and human interaction. |
+| **ENTITY HUMAN** | Biology, medicine, genetics, neuroscience and human regeneration. |
+| **ENTITY SCIENCE** | Physics, mathematics, chemistry and scientific research. |
+| **ENTITY ENGINEERING** | Engineering, robotics, materials and technological design. |
+| **ENTITY SPACE** | Astronomy, spacecraft, orbital mechanics and space exploration. |
+| **ENTITY PLANET** | Earth systems, climate, environment and ecosystems. |
+| **ENTITY FUTURE** | Predictive modelling, emerging technologies and invention. |
+| **ENTITY NANO** | Nanotechnology, nanoscale materials and molecular engineering. |
+| **ENTITY QUANTUM** | Quantum science, quantum computing and quantum simulations. |
+| **ENTITY REVERSE** | Reverse engineering of software, hardware and physical systems. |
+| **ENTITY CODE** | Programming, software engineering, AI development and debugging. |
+| **ENTITY EVOLVE** | Controlled continuous learning, evaluation and Owner-approved self-improvement. |
+| **ENTITY CORE** | Central orchestration, identity, authorization, security and governance. |
 
 ### Division coordination
 - ENTITY MIND acts as the central orchestration and user-interaction layer; it does not replace specialist expertise.
 - Divisions collaborate on cross-disciplinary tasks. For example, ENTITY SPACE and ENTITY ENGINEERING can jointly develop a spacecraft concept, while ENTITY PLANET and ENTITY SCIENCE analyze Earth-observation data.
 - Shared services provide identity, permissions, memory, audit logs, data provenance, research tools, simulation, and safety checks.
 - A division may recommend or prepare an action, but real-world execution remains subject to the platform's autonomy policy, user permissions, and risk-based approval requirements.
-- The division structure is modular: new divisions and specialist capabilities may be added without redesigning the entire system.
+- Specialist capabilities may evolve within the permanent register; the division set itself changes only through explicit governance review.
 
 ## Proposed technical architecture
 
@@ -219,14 +225,14 @@ ENTITY uses an owner-governed, rank-based access-control system. Every human acc
 - Separate read, create, modify, approve, execute, administer, and revoke permissions. Sensitive operations should use separation of duties where practical.
 - Require secure authentication, multi-factor authentication for owner and privileged accounts, session/device controls, protected recovery, and step-up authentication for critical actions.
 - Maintain tamper-evident audit records for access grants, denials, role changes, task assignment, approvals, data access, exports, and operational actions.
-- Provide the Owner with an access-control console showing users, ranks, divisions, assigned tasks, active sessions, approvals, exceptions, and audit history.
+- Plan an authenticated Owner dashboard for users, ranks, divisions, assigned tasks, sessions, approvals, exceptions, and audit history; this dashboard is not implemented. See [the dashboard architecture](ENTITY_OWNER_DASHBOARD.md).
 - Support immediate suspension, credential/session revocation, emergency lockdown, and documented recovery procedures.
 - Never store passwords or API secrets in source code or grant access through shared accounts.
 
 ### Ownership and governance rule
 
-The ENTITY Owner remains the final authority over who joins ENTITY and who may hold each rank. Executive administrators and division leaders may recommend candidates or request access changes, but may only approve or perform changes that the Owner has explicitly delegated. Ownership cannot be transferred or overridden by another user, division, or autonomous agent.
+The designated Original Founder and Owner's identity and authority safeguards are described in [ENTITY governance](ENTITY_GOVERNANCE.md); the future dashboard boundary is in [ENTITY_OWNER_DASHBOARD.md](ENTITY_OWNER_DASHBOARD.md). The Owner identity is not inferred from public biographical details. The ENTITY Owner remains the final authority over who joins ENTITY and who may hold each rank. Executive administrators and division leaders may recommend candidates or request access changes, but may only approve or perform changes that the Owner has explicitly delegated. Ownership cannot be transferred or overridden by another user, division, or autonomous agent.
 
 ### Implementation requirement
 
-This access model is a required platform foundation, not merely a documented interface. Implement the identity and authorization service before exposing sensitive divisions or real-world controls. Add automated tests for privilege escalation, cross-division access, expired assignments, revoked users, self-approval, unauthorized execution, and owner-account recovery. Until enforcement is implemented and tested, the system must not claim that rank-based access control is active.
+This access model is a required platform foundation, not merely a documented interface. Implement the identity and authorization service before exposing sensitive divisions or real-world controls. Add automated tests for privilege escalation, cross-division access, expired assignments, revoked users, self-approval, unauthorized execution, and Owner account recovery. The current recovery policy fails closed and does not support account takeover or subject rebinding; see [ENTITY_OWNER_RECOVERY.md](ENTITY_OWNER_RECOVERY.md). Until enforcement is implemented and tested, the system must not claim that rank-based access control is active.

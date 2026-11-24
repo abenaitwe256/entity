@@ -2,16 +2,17 @@
 
 ## Status
 
-This is a security foundation for the ENTITY backend. It is not a production-ready identity platform and is not connected to the browser prototype.
+This is a security foundation for the ENTITY backend. It is not a production-ready identity platform and is not connected to the browser prototype. The Original Owner identity design is documented in [governance](../../docs/ENTITY_GOVERNANCE.md), [recovery](../../docs/ENTITY_OWNER_RECOVERY.md), and the [dashboard architecture](../../docs/ENTITY_OWNER_DASHBOARD.md).
 
 | Area | Implemented | Regression coverage | Remaining work |
 | --- | --- | --- | --- |
 | OIDC bearer verification | Fixed issuer and audience, HTTPS JWKS, RS256/ES256 allowlist, expiry/issue-time/subject/JTI checks and bounded JWKS lookup | Signature, issuer, audience, expiration, subject, algorithm and audience-scoped session-digest tests | Validate claim mapping, key rotation and failure behavior against the chosen identity provider |
-| Accounts and rank | Exact OIDC subject must be provisioned; one Owner rank is reserved; only the Owner can initiate account changes | Owner/MFA, non-owner mutation, account target and forged-change cases | Owner recovery procedure, operational review and identity provider enrollment |
+| Accounts and rank | Exact OIDC subject must be provisioned; one Owner rank is reserved; only the bound Owner can initiate account changes | Owner/MFA, non-owner mutation, account target and forged-change cases | Provider enrollment, production review and identity proofing for the human-to-OIDC link |
+| Original Owner identity | Unique UUID anchor binds the pinned issuer/subject to one Rank 0 account; immutable triggers; no transfer route; bootstrap requires two pinned identities and fresh MFA | Exact subject binding, forged public descriptors, duplicate/replay bootstrap, Owner mutation, MFA, audit and policy-change cases | Live provider proofing, operator controls, runtime/migration role separation and recovery drill |
 | Resource policy | Division, classification, risk and resource owner come from a server-side registry record; unknown resources deny | Client context rejection, critical-risk downgrade attempt, resource-owner scope, cross-division denial | Deploy and connect a dedicated trusted resource registry identity |
 | Tasks, shares and access | Time-bounded, resource-scoped tasks; explicit read-only shares; revoked shares deny; regrant reactivates the grant | Expiry, scope, cross-division, revocation and regrant cases | Integrate checks into each authoritative product handler |
 | Independent approval | High/critical-risk, highly restricted or execute/administer/revoke requests are bound to task, action, resource, owner, policy version, environment and requester; approvals expire and are consumed once | Forged, self, wrong-rank, stale-policy, revoked-approver and replay cases | Product-specific approval UX and execution integration |
-| High-impact administration | Every account/task/share change is Owner-requested, freshly MFA-authenticated, approved by a different active Rank 1 reviewer, payload-bound, short-lived and one-time | Owner authority, second approver, affected-user, stale-MFA, forged and replay cases | Decide whether any operation needs multiple reviewers or an emergency process |
+| High-impact administration | Every account/task/share change is Owner-requested, freshly MFA-authenticated, approved by a different active Rank 1 reviewer, payload-bound, short-lived and one-time | Owner authority, second approver, affected-user, stale-MFA, forged and replay cases | No emergency override or succession process is implemented |
 | Sessions | Only an issuer/audience/subject/JTI digest is stored; expiry and revocation are checked; suspending a user revokes sessions | Session collision and revocation tests | Idle timeout, cleanup, refresh-token flow and in-flight request cancellation |
 | Audit | HMAC-linked records, serialized PostgreSQL append and Owner verification endpoint | Tampering and generated-ID correlation tests | External checkpoints/WORM retention, key IDs and tested key rotation; tail deletion alone is not detectable |
 | Database | Versioned Alembic upgrade replaces bootstrap create_all; migration is additive and forward-only | GitHub Actions applies it to PostgreSQL before tests | Staging rehearsal, backup/restore drill, monitoring and operational rollback procedure |
@@ -48,11 +49,13 @@ $env:ENTITY_OIDC_JWKS_URL = 'https://your-idp.example/.well-known/jwks.json'
 $env:ENTITY_DATABASE_URL = 'postgresql+psycopg://entity@localhost:5432/entity'
 $env:ENTITY_ENVIRONMENT = 'development'
 $env:ENTITY_AUDIT_HMAC_KEY = '<load a private random value from a secret manager>'
-python -m entity_auth.bootstrap_owner --owner-subject '<exact-owner-oidc-sub>' --initial-reviewer-subject '<different-reviewer-oidc-sub>'
+$env:ENTITY_ORIGINAL_OWNER_SUBJECT = '<exact-owner-oidc-sub pinned by controlled setup>'
+$env:ENTITY_ORIGINAL_OWNER_BOOTSTRAP_REVIEWER_SUBJECT = '<separately verified reviewer sub>'
+python -m entity_auth.bootstrap_owner
 uvicorn entity_auth.main:app --host 127.0.0.1 --port 8080
 ~~~
 
-The bootstrap command applies Alembic migrations. On a new database it provisions the exact Owner subject as Rank 0 and a different reviewer subject as Rank 1, then records both in the HMAC audit chain. On an existing database it can add one initial active Rank 1 reviewer only when the named Owner is active and no active Rank 1 reviewer exists. This is a one-time deployment-operator trust ceremony because the two-person rule cannot approve its own first reviewer; after that, only an Owner-requested, independently approved change can add or alter accounts. Never include an actual password, API key, bearer token or audit key in source control, logs, CI configuration or issue text.
+The one-time bootstrap applies migrations, then prompts without echo for short-lived Owner and independent-reviewer access tokens. It verifies both tokens with the configured OIDC verifier, requires exact deployment-pinned subjects and fresh MFA, and rejects an ambiguous database, duplicate or replay attempt. It creates or binds the exact active Rank 0 account, creates the separately verified Rank 1 reviewer when needed, writes the immutable UUID anchor, and records the binding in the HMAC audit chain in one transaction. It accepts no subject arguments and has no HTTP route. The Owner and reviewer must be identity-proofed through a controlled process; names and birthplaces are not proof. See the complete [bootstrap and recovery procedure](../../docs/ENTITY_OWNER_RECOVERY.md). Never include an actual password, API key, bearer token or audit key in source control, logs, CI configuration or issue text.
 
 ## Proposed Keycloak staging validation
 
@@ -71,6 +74,8 @@ See [ENTITY browser authentication integration](../../docs/ENTITY_AUTH_BROWSER_I
 - Session expiry follows the OIDC access-token expiry. There is no refresh flow, idle timeout, expired-session cleanup or cancellation of requests already in flight.
 - The audit chain detects modifications and interior gaps when checked with the external HMAC key. It cannot detect deletion of the newest tail without an independent external checkpoint. Key rotation and WORM/external anchoring are not implemented.
 - The Alembic revision is forward-only because dropping authorization/audit tables is destructive. Restore from a verified backup rather than downgrading. Production rollout still needs a staging rehearsal and restore validation.
-- Rate limiting, alerting, security incident response, device trust, Owner recovery drills, delegated roles and production threat modeling remain incomplete.
+- Rate limiting, alerting, security incident response, device trust, Owner recovery drills, delegated roles, a dashboard, registration/invitation workflows, and production threat modeling remain incomplete.
+- The first-Owner bootstrap is implemented but has not been run against a provisioned provider. Founder-to-OIDC identity proofing is an operational ceremony, not an automated identity check. PostgreSQL protection triggers can be disabled by a sufficiently privileged database owner; runtime/migration role separation and independent controls remain to be deployed and tested.
+- Recovery intentionally fails closed when the pinned issuer or subject is lost. There is no break-glass, subject rebinding, alternate Owner, succession, or ownership-transfer procedure implemented.
 
 These limits mean the service must not be described or deployed as production-ready yet.
