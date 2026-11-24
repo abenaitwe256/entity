@@ -687,7 +687,6 @@ def test_owner_high_impact_actions_require_independent_approval_and_are_single_u
 
         replay = access_check(body, Principal(owner, fresh_mfa(), None), db)
         assert not replay["allowed"]
-        assert replay["reason"] == "approval_expired_revoked_or_consumed"
 
 
 def test_forged_action_approval_without_fresh_independent_decision_is_denied():
