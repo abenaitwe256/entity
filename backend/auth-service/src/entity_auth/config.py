@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     jwks_timeout_seconds: int = Field(default=5, ge=1, le=30)
     resource_registry_audience: str | None = None
     resource_registry_subjects: str = ""
+    original_owner_subject: str | None = Field(default=None, max_length=255)
+    original_owner_bootstrap_reviewer_subject: str | None = Field(default=None, max_length=255)
 
     @field_validator("oidc_issuer", "oidc_jwks_url")
     @classmethod
@@ -43,6 +45,20 @@ class Settings(BaseSettings):
         if not value.strip():
             raise ValueError("ENTITY_OIDC_AUDIENCE must not be empty")
         return value.strip()
+
+    @field_validator("original_owner_subject", mode="before")
+    @classmethod
+    def normalize_original_owner_subject(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("original_owner_bootstrap_reviewer_subject", mode="before")
+    @classmethod
+    def normalize_bootstrap_reviewer_subject(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @field_validator("resource_registry_audience", mode="before")
     @classmethod
@@ -95,6 +111,10 @@ class Settings(BaseSettings):
                 "ENTITY_RESOURCE_REGISTRY_SUBJECTS, or leave both unset"
             )
         if self.environment in {"staging", "production"}:
+            if not self.original_owner_subject:
+                raise ValueError(
+                    "Staging and production require a pinned ENTITY_ORIGINAL_OWNER_SUBJECT"
+                )
             sslmode = parse_qs(urlsplit(self.database_url).query).get("sslmode", [])
             if sslmode != ["verify-full"]:
                 raise ValueError("Staging and production PostgreSQL connections must use sslmode=verify-full")

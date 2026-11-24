@@ -1,6 +1,6 @@
 # ENTITY (Prototype)
 
-> Formerly **Holo Miniature World**. The product vision, divisions, roadmap and access-control model are in [`docs/ENTITY_PRODUCT_BLUEPRINT.md`](docs/ENTITY_PRODUCT_BLUEPRINT.md). The repository contains an early XR prototype and a separate identity/authorization service foundation. The browser prototype is not yet connected to that service.
+> Formerly **Holo Miniature World**. The product vision and access-control model are in [`docs/ENTITY_PRODUCT_BLUEPRINT.md`](docs/ENTITY_PRODUCT_BLUEPRINT.md); the complete permanent division set is in [`docs/ENTITY_DIVISION_REGISTER.md`](docs/ENTITY_DIVISION_REGISTER.md). The repository contains an early XR prototype and a separate identity/authorization service foundation. The browser prototype is not yet connected to that service. The designated Original Owner identity, safe recovery boundary and planned dashboard are documented in [`docs/ENTITY_GOVERNANCE.md`](docs/ENTITY_GOVERNANCE.md), [`docs/ENTITY_OWNER_RECOVERY.md`](docs/ENTITY_OWNER_RECOVERY.md), and [`docs/ENTITY_OWNER_DASHBOARD.md`](docs/ENTITY_OWNER_DASHBOARD.md).
 
 Open-source prototype for a realtime XR/social interface where users physically interact with virtual miniature worlds, planets, and creatures.
 

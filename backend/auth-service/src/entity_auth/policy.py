@@ -8,12 +8,14 @@ from sqlalchemy.orm import Session
 
 from entity_auth.config import get_settings
 from entity_auth.db import (
-    ActionApproval, DivisionMembership, ResourcePolicy, SharedResourceGrant, TaskAssignment, User,
+    ActionApproval, DivisionMembership, OriginalOwnerIdentity, ORIGINAL_OWNER_KEY,
+    ResourcePolicy, SharedResourceGrant, TaskAssignment, User,
 )
 
 
 DIVISIONS = {
-    "mind", "reality", "human", "science", "engineering", "space", "planet", "future"
+    "mind", "reality", "human", "science", "engineering", "space", "planet", "future",
+    "nano", "quantum", "reverse", "code", "evolve", "core",
 }
 PERMISSIONS = {"read", "create", "modify", "approve", "execute", "administer", "revoke"}
 RISK_LEVELS = {"low", "moderate", "high", "critical"}
@@ -63,6 +65,23 @@ def has_recent_step_up(claims: dict) -> bool:
         return False
     age = datetime.now(timezone.utc).timestamp() - auth_time
     return 0 <= age <= get_settings().step_up_max_age_seconds
+
+
+def original_owner_identity_id(db: Session, user: User) -> str | None:
+    """Return the internal immutable identity ID only for the pinned issuer/subject binding."""
+    settings = get_settings()
+    if (
+        user.rank != 0
+        or not settings.original_owner_subject
+        or user.subject != settings.original_owner_subject
+    ):
+        return None
+    return db.scalar(select(OriginalOwnerIdentity.identity_id).where(
+        OriginalOwnerIdentity.identity_key == ORIGINAL_OWNER_KEY,
+        OriginalOwnerIdentity.owner_user_id == user.id,
+        OriginalOwnerIdentity.oidc_issuer == settings.oidc_issuer,
+        OriginalOwnerIdentity.oidc_subject == settings.original_owner_subject,
+    ))
 
 
 def resolve_resource_context(db: Session, request: AccessRequest) -> ResourceContext | None:
@@ -246,6 +265,8 @@ def authorize(
         return Decision(False, "execution_disabled_outside_production")
     if not user.active:
         return Decision(False, "account_disabled")
+    if user.rank == 0 and not original_owner_identity_id(db, user):
+        return Decision(False, "owner_identity_binding_required")
     if user.rank <= get_settings().privileged_max_rank and not has_mfa(claims):
         return Decision(False, "mfa_required")
 

@@ -4,6 +4,10 @@
 
 The checked-in XR experience is a static browser prototype. It renders local scenes and controls but has no sign-in, account, session or server-authoritative data flow. The separate Python auth service is not connected to it. The auth service now has one narrow protected metadata-reference read backed by its trusted resource-policy record; it does not expose product content, device controls or other domain operations. Keep the prototype's current public, non-sensitive behavior until an authoritative backend exists.
 
+## Owner identity and dashboard boundary
+
+The future Owner dashboard must use the server-resolved immutable Owner identity and fresh MFA. The browser cannot establish the Owner from a name or birthplace, write Owner rank, change the Owner anchor, or decide an approval. Review [the dashboard architecture](ENTITY_OWNER_DASHBOARD.md), [governance](ENTITY_GOVERNANCE.md), and [Owner recovery](ENTITY_OWNER_RECOVERY.md). No dashboard UI or broad user-list/registration API is implemented; preserve that boundary until each server handler is authorized and tested.
+
 ## Target request path
 
 ~~~text

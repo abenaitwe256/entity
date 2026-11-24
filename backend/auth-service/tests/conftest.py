@@ -8,6 +8,8 @@ os.environ.setdefault("ENTITY_OIDC_JWKS_URL", "https://identity.test.invalid/.we
 os.environ.setdefault("ENTITY_DATABASE_URL", "postgresql+psycopg://postgres@localhost:5432/entity")
 os.environ.setdefault("ENTITY_AUDIT_HMAC_KEY", secrets.token_urlsafe(48))
 os.environ.setdefault("ENTITY_ENVIRONMENT", "development")
+os.environ.setdefault("ENTITY_ORIGINAL_OWNER_SUBJECT", "owner-sub")
+os.environ.setdefault("ENTITY_ORIGINAL_OWNER_BOOTSTRAP_REVIEWER_SUBJECT", "reviewer-sub")
 
 import pytest
 

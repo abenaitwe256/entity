@@ -23,7 +23,8 @@ from entity_auth.db import (
 from entity_auth.oidc import verify_bearer
 from entity_auth.policy import (
     AccessRequest, CLASSIFICATIONS, Decision, DIVISIONS, PERMISSIONS, RISK_LEVELS,
-    authorize, consume_approval, has_mfa, has_recent_step_up, requires_independent_approval,
+    authorize, consume_approval, has_mfa, has_recent_step_up,
+    original_owner_identity_id, requires_independent_approval,
 )
 
 
@@ -63,8 +64,15 @@ def append_audit(db: Session, actor: str, event_type: str, outcome: str, detail:
 
 
 class Principal:
-    def __init__(self, user: User, claims: dict, session: TokenSession):
+    def __init__(
+        self,
+        user: User,
+        claims: dict,
+        session: TokenSession | None,
+        original_owner_identity_id: str | None = None,
+    ):
         self.user, self.claims, self.session = user, claims, session
+        self.original_owner_identity_id = original_owner_identity_id
 
 
 def _track_token_session(db: Session, user: User, verified) -> TokenSession:
@@ -108,10 +116,13 @@ def current_principal(
     user = db.scalar(select(User).where(User.subject == subject))
     if not user or not user.active:
         raise HTTPException(status_code=403, detail="Account is not provisioned or is suspended")
+    identity_id = original_owner_identity_id(db, user) if user.rank == 0 else None
+    if user.rank == 0 and not identity_id:
+        raise HTTPException(status_code=403, detail="Original Owner identity binding is not provisioned")
     if user.rank <= get_settings().privileged_max_rank and not has_mfa(verified.claims):
         raise HTTPException(status_code=403, detail="MFA is required for privileged accounts")
     token_session = _track_token_session(db, user, verified)
-    return Principal(user, verified.claims, token_session)
+    return Principal(user, verified.claims, token_session, identity_id)
 
 
 def resource_registry_principal(
@@ -139,9 +150,21 @@ def resource_registry_principal(
     token_session = _track_token_session(db, user, verified)
     return Principal(user, verified.claims, token_session)
 
-def owner_only(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
-    if principal.user.rank != 0:
-        raise HTTPException(status_code=403, detail="Owner authorization required")
+def owner_only(
+    principal: Annotated[Principal, Depends(current_principal)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Principal:
+    identity_id = original_owner_identity_id(db, principal.user)
+    if (
+        principal.user.rank != 0
+        or not identity_id
+        or (
+            principal.original_owner_identity_id is not None
+            and principal.original_owner_identity_id != identity_id
+        )
+    ):
+        raise HTTPException(status_code=403, detail="Bound Original Owner identity required")
+    principal.original_owner_identity_id = identity_id
     if not has_recent_step_up(principal.claims):
         raise HTTPException(status_code=403, detail="Recent MFA authentication is required")
     return principal
@@ -460,6 +483,7 @@ def me(principal: Annotated[Principal, Depends(current_principal)], db: Annotate
         "divisions": divisions,
         "session_id": principal.session.id,
         "expires_at": principal.session.expires_at,
+        "original_owner_identity_id": principal.original_owner_identity_id,
     }
 
 

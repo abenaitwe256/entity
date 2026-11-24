@@ -1,108 +1,191 @@
 from __future__ import annotations
 
-import argparse
+import getpass
 from pathlib import Path
+from uuid import uuid4
 
+import jwt
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from entity_auth.db import SessionLocal, User
+from entity_auth.config import Settings, get_settings
+from entity_auth.db import (
+    ORIGINAL_OWNER_KEY, OriginalOwnerIdentity, SessionLocal, User, utcnow,
+)
+from entity_auth.oidc import verify_bearer
+from entity_auth.policy import has_recent_step_up
 
 
-def provision_initial_users(db: Session, owner_subject: str, reviewer_subject: str) -> tuple[User, User]:
-    if db.scalar(select(User).limit(1)):
-        raise ValueError("Refusing initial bootstrap: the user table is not empty")
-    if (
-        not owner_subject or not owner_subject.strip()
-        or not reviewer_subject or not reviewer_subject.strip()
-        or owner_subject == reviewer_subject
-    ):
-        raise ValueError("Initial Owner and Rank 1 reviewer must be distinct, non-empty OIDC subjects")
-
-    owner = User(subject=owner_subject, rank=0, active=True, created_by="bootstrap")
-    reviewer = User(subject=reviewer_subject, rank=1, active=True, created_by="bootstrap")
-    db.add_all([owner, reviewer])
-    db.flush()
-
-    # Bootstrap is the initial trust ceremony; record both identities in the HMAC audit chain.
-    from entity_auth.main import append_audit
-
-    append_audit(db, "bootstrap", "identity.initial_trust_established", "success", {
-        "owner_subject": owner_subject,
-        "initial_reviewer_subject": reviewer_subject,
-    })
-    return owner, reviewer
+_BOOTSTRAP_ADVISORY_LOCK = 7408216302
 
 
-def provision_initial_reviewer(db: Session, owner_subject: str, reviewer_subject: str) -> User:
-    """One-time deployment-operator bootstrap for an existing Owner-only database."""
-    owner = db.scalar(select(User).where(
-        User.subject == owner_subject, User.rank == 0, User.active.is_(True),
-    ))
-    if not owner:
-        raise ValueError("The specified active Owner was not found")
-    active_reviewer = db.scalar(select(User.id).where(User.rank == 1, User.active.is_(True)).limit(1))
-    if active_reviewer:
-        raise ValueError("An active Rank 1 reviewer already exists")
-    if (
-        not reviewer_subject or not reviewer_subject.strip()
-        or reviewer_subject == owner_subject
-        or db.scalar(select(User.id).where(User.subject == reviewer_subject))
-    ):
-        raise ValueError("Initial reviewer must be a distinct, not-yet-provisioned OIDC subject")
+def _verified_subject(token: str, role: str) -> str:
+    if not token or not token.strip():
+        raise ValueError(f"A fresh {role} OIDC token is required")
+    try:
+        verified = verify_bearer(token.strip())
+    except (jwt.PyJWTError, ValueError, OSError):
+        raise ValueError(f"The {role} OIDC token could not be verified") from None
 
-    reviewer = User(
-        subject=reviewer_subject, rank=1, active=True, created_by="bootstrap",
+    subject = verified.claims.get("sub")
+    if not isinstance(subject, str) or not subject.strip():
+        raise ValueError(f"The {role} OIDC token has no valid subject")
+    if not has_recent_step_up(verified.claims):
+        raise ValueError(f"The {role} identity must complete fresh MFA before bootstrap")
+    return subject
+
+
+def verify_bootstrap_tokens(
+    owner_token: str, reviewer_token: str, *, settings: Settings | None = None
+) -> tuple[str, str]:
+    """Validate both short-lived OIDC identities before any Owner record is created."""
+    settings = settings or get_settings()
+    expected_owner = settings.original_owner_subject
+    if not expected_owner:
+        raise ValueError("Pin ENTITY_ORIGINAL_OWNER_SUBJECT before bootstrap")
+    owner_subject = _verified_subject(owner_token, "designated Owner")
+    if owner_subject != expected_owner:
+        raise ValueError("Authenticated Owner subject does not match the designated Owner binding")
+    expected_reviewer = settings.original_owner_bootstrap_reviewer_subject
+    if not expected_reviewer:
+        raise ValueError("Pin ENTITY_ORIGINAL_OWNER_BOOTSTRAP_REVIEWER_SUBJECT before bootstrap")
+    reviewer_subject = _verified_subject(reviewer_token, "independent Rank 1 reviewer")
+    if reviewer_subject != expected_reviewer:
+        raise ValueError("Authenticated reviewer subject does not match the pinned bootstrap reviewer")
+    if reviewer_subject == owner_subject:
+        raise ValueError("The initial Owner and independent reviewer must be different identities")
+    return owner_subject, reviewer_subject
+
+
+def _establish_original_owner(
+    db: Session,
+    owner_subject: str,
+    reviewer_subject: str,
+    *,
+    issuer: str,
+) -> tuple[OriginalOwnerIdentity, User, User]:
+    """Create or bind the one immutable Owner identity after token verification."""
+    db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": _BOOTSTRAP_ADVISORY_LOCK})
+    if db.get(OriginalOwnerIdentity, ORIGINAL_OWNER_KEY):
+        raise ValueError("Original Owner identity is already established; bootstrap cannot be replayed")
+
+    existing_owner = db.scalar(select(User).where(User.rank == 0).with_for_update())
+    designated_account = db.scalar(
+        select(User).where(User.subject == owner_subject).with_for_update()
     )
-    db.add(reviewer)
+    if existing_owner:
+        if existing_owner.subject != owner_subject or not existing_owner.active:
+            raise ValueError("Existing Rank 0 account does not match the active designated Owner")
+        if designated_account is not existing_owner and (
+            not designated_account or designated_account.id != existing_owner.id
+        ):
+            raise ValueError("Designated Owner subject is bound to a different account")
+        owner = existing_owner
+        binding_mode = "bind-existing-owner"
+    else:
+        if db.scalar(select(User.id).limit(1)):
+            raise ValueError(
+                "Accounts already exist without a designated Owner; operator review is required"
+            )
+        if designated_account:
+            raise ValueError("Designated Owner subject is already provisioned at a non-Owner rank")
+        owner = User(
+            subject=owner_subject, rank=0, active=True,
+            created_by="controlled_original_owner_bootstrap",
+        )
+        db.add(owner)
+        db.flush()
+        binding_mode = "initial-owner"
+
+    reviewer = db.scalar(
+        select(User).where(User.subject == reviewer_subject).with_for_update()
+    )
+    if reviewer:
+        if reviewer.rank != 1 or not reviewer.active:
+            raise ValueError(
+                "Authenticated reviewer must be a separately provisioned active Rank 1 identity"
+            )
+    else:
+        reviewer = User(
+            subject=reviewer_subject, rank=1, active=True,
+            created_by="controlled_original_owner_bootstrap",
+        )
+        db.add(reviewer)
+
     db.flush()
+    identity = OriginalOwnerIdentity(
+        identity_key=ORIGINAL_OWNER_KEY,
+        identity_id=str(uuid4()),
+        owner_user_id=owner.id,
+        oidc_issuer=issuer,
+        oidc_subject=owner_subject,
+        created_at=utcnow(),
+        created_by=owner_subject,
+    )
+    db.add(identity)
+    db.flush()
+
+    # Bind the OIDC subject and account in the same HMAC-audited transaction.
     from entity_auth.main import append_audit
 
-    append_audit(db, "bootstrap", "identity.initial_reviewer_established", "success", {
+    append_audit(db, reviewer_subject, "identity.original_owner_bootstrap.reviewed", "success", {
+        "identity_id": identity.identity_id,
+        "issuer": issuer,
         "owner_subject": owner_subject,
-        "initial_reviewer_subject": reviewer_subject,
+        "reviewer_subject": reviewer_subject,
+        "binding_mode": binding_mode,
     })
-    return reviewer
+    append_audit(db, owner_subject, "identity.original_owner_bound", "success", {
+        "identity_id": identity.identity_id,
+        "issuer": issuer,
+        "owner_subject": owner_subject,
+        "reviewer_subject": reviewer_subject,
+        "binding_mode": binding_mode,
+    })
+    return identity, owner, reviewer
 
 
-def provision_initial_owner(
-    db: Session, subject: str, initial_reviewer_subject: str | None = None
-) -> User:
-    """Compatibility helper that refuses an Owner-only bootstrap with no second reviewer."""
-    if initial_reviewer_subject is None:
-        raise ValueError("An initial independent Rank 1 reviewer is required")
-    owner, _reviewer = provision_initial_users(db, subject, initial_reviewer_subject)
-    return owner
+def bootstrap_original_owner(
+    db: Session, owner_token: str, reviewer_token: str
+) -> tuple[OriginalOwnerIdentity, User, User]:
+    settings = get_settings()
+    owner_subject, reviewer_subject = verify_bootstrap_tokens(
+        owner_token, reviewer_token, settings=settings,
+    )
+    return _establish_original_owner(
+        db, owner_subject, reviewer_subject, issuer=settings.oidc_issuer,
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Apply the schema and establish the initial Owner and independent reviewer."
-    )
-    parser.add_argument("--owner-subject", required=True, help="Exact OIDC sub claim for the Owner")
-    parser.add_argument(
-        "--initial-reviewer-subject", required=True,
-        help="Exact, different OIDC sub claim for the initial Rank 1 reviewer",
-    )
-    args = parser.parse_args()
+    settings = get_settings()
+    if not settings.original_owner_subject:
+        raise SystemExit("Pin ENTITY_ORIGINAL_OWNER_SUBJECT before bootstrap")
 
     config = Config()
     config.set_main_option(
         "script_location", str(Path(__file__).resolve().parent / "migrations")
     )
     command.upgrade(config, "head")
-    with SessionLocal.begin() as db:
-        try:
-            if db.scalar(select(User.id).limit(1)):
-                provision_initial_reviewer(
-                    db, args.owner_subject, args.initial_reviewer_subject,
-                )
-            else:
-                provision_initial_users(
-                    db, args.owner_subject, args.initial_reviewer_subject,
-                )
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from exc
-    print("Initial Owner and Rank 1 reviewer provisioned. Protect both identities with MFA.")
+
+    # getpass keeps short-lived bearer tokens out of argv, shell history and normal echo.
+    owner_token = getpass.getpass("Fresh-MFA OIDC access token for the designated Owner: ")
+    reviewer_token = getpass.getpass("Fresh-MFA OIDC access token for an independent Rank 1 reviewer: ")
+    try:
+        with SessionLocal.begin() as db:
+            identity, _owner, _reviewer = bootstrap_original_owner(
+                db, owner_token, reviewer_token,
+            )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
+    print(
+        "Original Owner identity established through verified OIDC and fresh MFA. "
+        f"Internal identity ID: {identity.identity_id}"
+    )
+
+
+if __name__ == "__main__":
+    main()
