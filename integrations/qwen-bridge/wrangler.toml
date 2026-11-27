@@ -1,0 +1,9 @@
+name = "entity-qwen-bridge"
+main = "src/index.js"
+compatibility_date = "2026-11-28"
+workers_dev = true
+
+[vars]
+QWEN_ENABLED = "false"
+QWEN_FREE_PROVIDER_APPROVED = "false"
+QWEN_RESOURCE_ID = "qwen3.5-9b"
