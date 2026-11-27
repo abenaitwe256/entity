@@ -1,0 +1,22 @@
+name: Qwen bridge checks
+
+on:
+  pull_request:
+    paths:
+      - "integrations/qwen-bridge/**"
+      - ".github/workflows/qwen-bridge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test request validation
+        run: node --test integrations/qwen-bridge/test/validation.test.js
