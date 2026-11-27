@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "policy": {
+    "defaultState": "candidate",
+    "defaultEnabled": false,
+    "ownerApprovalRequired": true,
+    "paidProvidersAllowed": false,
+    "automaticPaidFallback": false,
+    "pinImmutableRevision": true,
+    "providerCredentialsInBrowser": false
+  },
+  "models": [
+    {
+      "id": "qwen35-9b",
+      "name": "Qwen3.5-9B",
+      "repo": "Qwen/Qwen3.5-9B",
+      "role": "general-multimodal",
+      "modalities": [
+        "text",
+        "image"
+      ],
+      "capabilities": [
+        "reasoning",
+        "coding",
+        "vision",
+        "tool-proposal"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3.5-9B",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3-14B",
+      "repo": "Qwen/Qwen3-14B",
+      "role": "text-reasoning",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "reasoning",
+        "planning",
+        "coding"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-14B",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "gpt-oss-20b",
+      "name": "GPT-OSS-20B",
+      "repo": "openai/gpt-oss-20b",
+      "role": "reasoning-challenger",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "reasoning",
+        "tool-proposal"
+      ],
+      "modelCard": "https://huggingface.co/openai/gpt-oss-20b",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-coder-30b-a3b",
+      "name": "Qwen3-Coder-30B-A3B-Instruct",
+      "repo": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "role": "coding-specialist",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "code-generation",
+        "repository-analysis",
+        "debugging",
+        "tool-proposal"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-vl-8b",
+      "name": "Qwen3-VL-8B-Instruct",
+      "repo": "Qwen/Qwen3-VL-8B-Instruct",
+      "role": "vision-specialist",
+      "modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "capabilities": [
+        "vision",
+        "ocr",
+        "video-understanding",
+        "spatial-reasoning"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "whisper-large-v3",
+      "name": "Whisper Large V3",
+      "repo": "openai/whisper-large-v3",
+      "role": "speech-recognition",
+      "modalities": [
+        "audio"
+      ],
+      "capabilities": [
+        "speech-to-text",
+        "speech-translation"
+      ],
+      "modelCard": "https://huggingface.co/openai/whisper-large-v3",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-asr-1.7b",
+      "name": "Qwen3-ASR-1.7B",
+      "repo": "Qwen/Qwen3-ASR-1.7B",
+      "role": "speech-recognition-alternative",
+      "modalities": [
+        "audio"
+      ],
+      "capabilities": [
+        "speech-to-text"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-tts-0.6b",
+      "name": "Qwen3-TTS-12Hz-0.6B-Base",
+      "repo": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "role": "speech-generation",
+      "modalities": [
+        "text",
+        "audio"
+      ],
+      "capabilities": [
+        "text-to-speech"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-embedding-0.6b",
+      "name": "Qwen3-Embedding-0.6B",
+      "repo": "Qwen/Qwen3-Embedding-0.6B",
+      "role": "embedding",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "semantic-search",
+        "retrieval",
+        "clustering"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    },
+    {
+      "id": "qwen3-reranker-0.6b",
+      "name": "Qwen3-Reranker-0.6B",
+      "repo": "Qwen/Qwen3-Reranker-0.6B",
+      "role": "reranking",
+      "modalities": [
+        "text"
+      ],
+      "capabilities": [
+        "reranking",
+        "retrieval-relevance"
+      ],
+      "modelCard": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B",
+      "state": "candidate",
+      "enabled": false,
+      "ownerApproved": false,
+      "providerEndpoint": null,
+      "revision": null
+    }
+  ],
+  "integrations": [
+    {
+      "id": "chatgpt-action",
+      "name": "ChatGPT custom GPT Action",
+      "role": "external-client",
+      "state": "contract-prepared",
+      "enabled": false,
+      "requires": "eligible ChatGPT workspace, deployed HTTPS gateway and configured ENTITY OAuth client"
+    },
+    {
+      "id": "chatgpt-mcp",
+      "name": "ChatGPT custom MCP app",
+      "role": "external-client",
+      "state": "future-option",
+      "enabled": false,
+      "requires": "eligible ChatGPT workspace, deployed MCP server and OAuth review"
+    }
+  ]
+}
