@@ -13,10 +13,13 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/qwen-bridge
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Test request validation
-        run: node --test integrations/qwen-bridge/test/validation.test.js
+      - name: Run bridge and model-registry tests
+        run: npm test
