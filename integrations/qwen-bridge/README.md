@@ -1,116 +1,102 @@
-# ENTITY Qwen3.5-9B Bridge
+# ENTITY Qwen and multi-model AI bridge
 
-This is a disabled-by-default Cloudflare Worker bridge intended to provide one restricted inference endpoint to both:
+This integration folder contains the first disabled-by-default foundation for connecting ENTITY and eligible ChatGPT clients to a common AI gateway.
 
-- ENTITY's authenticated backend; and
-- a ChatGPT API Action when the user's ChatGPT workspace supports custom actions.
+## Scope: all identified model capabilities
 
-The bridge does not host model weights. It proxies to an OpenAI-compatible Qwen3.5-9B inference endpoint that must be separately supplied and explicitly approved.
+The candidate registry in `model-registry.json` covers all models selected for ENTITY AI Foundation v1:
 
-## Current state
+| Capability | Model candidate |
+|---|---|
+| General multimodal intelligence | Qwen3.5-9B |
+| Text reasoning | Qwen3-14B |
+| Reasoning challenger | GPT-OSS-20B |
+| Coding and repository analysis | Qwen3-Coder-30B-A3B-Instruct |
+| Vision, OCR and video | Qwen3-VL-8B-Instruct |
+| Speech recognition | Whisper Large V3 |
+| Alternative speech recognition | Qwen3-ASR-1.7B |
+| Speech generation | Qwen3-TTS-12Hz-0.6B-Base |
+| Embeddings and semantic retrieval | Qwen3-Embedding-0.6B |
+| Retrieval reranking | Qwen3-Reranker-0.6B |
 
-- Worker source and API contract: implemented as an isolated foundation.
-- Default inference state: disabled.
-- ENTITY authentication integration: depends on the identity/authorization service in PR #5/#6 being reviewed, merged and deployed.
-- Resource policy: a trusted resource-registry service must register resource type `ai_model`, ID `qwen3.5-9b`, with the intended owner/division/classification/risk values.
-- Qwen inference: not connected until an approved free or owner-approved local endpoint exists.
-- ChatGPT connection: OpenAPI Action contract is provided, but it cannot be installed on every ChatGPT plan. Personal Free accounts cannot create/publish new GPTs, and custom MCP connections are currently limited to Business and Enterprise/Edu workspaces. See the official [GPT creation requirements](https://help.openai.com/en/articles/8554397-creating-with-chatgpt) and [custom MCP availability](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt).
+The registry also records ChatGPT Action and MCP as external client integration options. ChatGPT is not a model provider; it is an authorized client of ENTITY's narrow API.
 
-## Request flow
+**Important:** registering a candidate does not mean its weights are hosted, its API is configured, or it is currently accessible. All ten model candidates are disabled, unapproved and have no configured endpoint or pinned revision. This is deliberate fail-closed behavior.
 
-```text
-ChatGPT API Action ─┐
-                   ├─ HTTPS + ENTITY OIDC bearer token
-ENTITY backend ────┘
-                         |
-                         v
-                Cloudflare Worker
-                         |
-                1. /v1/auth/me
-                2. /v1/access/check
-                   action=read
-                   resource_type=ai_model
-                   resource_id=qwen3.5-9b
-                         |
-                         v
-                OpenAI-compatible Qwen endpoint
-                         |
-                         v
-                Text completion response
-```
+## Architecture
 
-The browser must not call this worker directly with a long-lived service credential. ENTITY should call it from a trusted backend while forwarding the authenticated user's short-lived OIDC access token.
+- `src/index.js`: Cloudflare Worker bridge with restricted text completion endpoint.
+- `model-registry.json`: versioned catalogue of candidate models and integration options.
+- `provider-contract.md`: common adapter contract and routing policy for text, vision, speech, embedding and reranking providers.
+- `openapi.yaml`: ChatGPT Action contract for the narrow Qwen text endpoint.
+- `test/`: request validation and registry policy tests.
 
-## Security behavior
+All model adapters must use the same provider-neutral contract. The application must not bind directly to a vendor-specific SDK.
 
-- The worker requires a bearer token and validates it indirectly through the ENTITY auth service.
-- The worker calls `GET /v1/auth/me` and requires an active, provisioned account.
-- The worker calls `POST /v1/access/check` using a server-selected model resource. Client input cannot choose the resource ID or policy context.
-- The auth service remains the authority for identity, session revocation, MFA, division/task/resource permissions and audit.
-- The worker does not expose arbitrary tools, file access, memory, admin actions, or device controls to Qwen.
-- Only `Qwen/Qwen3.5-9B` is accepted.
-- Requests are plain text only in this first release; streaming and tool calls are disabled.
-- Request bodies are limited to 256 KB, message count to 24, individual message content to 64 KB, and output to 2,048 tokens.
-- No prompts, completions, bearer tokens or provider keys are logged by this worker.
-- The Qwen provider key is a Worker secret, never a browser variable or committed file.
-- Provider errors fail closed; no paid fallback exists.
+## Provider routing and authority
 
-## $0 controls
+The gateway may select only models that are:
+- owner-approved;
+- explicitly enabled;
+- pinned to an immutable revision;
+- configured with a verified endpoint;
+- evaluated for the task and modality;
+- permitted by the authenticated user's division, task, resource and environment permissions.
 
-The latest Hugging Face Inference Providers pricing documentation states that Free users have no included monthly inference credits; additional use requires purchased credits. Therefore a Hugging Face token alone does not provide a $0 inference endpoint.
+Adaptive routing can choose between already-approved models. It cannot approve or activate candidates, change the registry, alter security policy or enable paid inference. No eligible model means a truthful unavailable response, not an unapproved or paid fallback.
 
-Do not enable this bridge against a paid endpoint. The operator must verify the endpoint's actual price and terms, then set both enablement flags manually. Local inference can be connected later through a secure HTTPS endpoint or private tunnel after hardware and runtime compatibility are verified. A local server bound to localhost is not reachable by a cloud Worker without a deliberate secure networking arrangement.
+The model is not an authorization engine. All tool execution must be handled by a separate ENTITY policy-enforcing tool gateway.
 
-## Configure after dependencies are approved
+## Qwen bridge
 
-Deploy the worker only after the ENTITY auth service is live and the Qwen endpoint is owner-approved.
+The Worker exposes `POST /v1/chat/completions`, pins requests to `Qwen/Qwen3.5-9B`, accepts plain-text messages only, disables model tool execution and streaming, and enforces bounded request/output sizes.
 
-Non-secret Worker variables:
+The Worker checks:
+1. `GET /v1/auth/me` at the ENTITY identity service.
+2. `POST /v1/access/check` for the server-selected `ai_model/qwen3.5-9b` resource.
 
-- `ENTITY_AUTH_BASE_URL`: HTTPS base URL of the deployed ENTITY auth service.
-- `QWEN_API_BASE_URL`: HTTPS OpenAI-compatible API base ending in `/v1`.
-- `QWEN_RESOURCE_ID`: defaults to `qwen3.5-9b`.
-- `QWEN_ENABLED`: must remain `false` until approval.
-- `QWEN_FREE_PROVIDER_APPROVED`: must remain `false` until the owner verifies the provider is genuinely free or has explicitly approved a local endpoint.
+It does not expose ENTITY files, memory, administration, device controls or secrets.
 
-Optional secret:
+## Current state and blockers
 
-- `QWEN_API_KEY`: provider credential, stored with `wrangler secret`; never commit it.
+- Code and registry foundation: committed on the draft PR branch.
+- Qwen inference: disabled; no endpoint configured.
+- Other model adapters: contract and registry defined; individual adapters/endpoints not yet implemented or tested.
+- ChatGPT Action: OpenAPI contract prepared; OAuth URLs and deployed Worker URL are placeholders.
+- ChatGPT MCP: future integration option, not implemented in this PR.
+- ENTITY identity service: runtime dependency on PR #5/#6 being reviewed, approved, merged and deployed.
+- Model resource registry: must register the Qwen resource with correct policy.
+- Local inference: not enabled until compatible hardware/runtime are verified and owner approves.
+- Free hosting: must be verified per provider. No Hugging Face free inference quota is assumed.
+- Production use: prohibited until staged integration and security tests pass.
 
-Do not enable the worker by editing defaults in source. Use Cloudflare's secret/configuration interface and retain an auditable record of the owner's approval.
+The pending PRs #5 and #6 must remain untouched and unmerged by this work.
 
-## ChatGPT setup
+## $0 budget
 
-The OpenAPI Action schema is in `openapi.yaml`. Before importing it:
+Do not enable billing, paid inference endpoints, GPU rentals, subscriptions or paid fallback. A model's open license does not make its hosted inference free. Use a verified no-cost endpoint, an owner-approved local endpoint, or a mock in development. If none is available, return a clear unavailable status.
 
-1. Deploy the Worker to an HTTPS URL.
-2. Provision the OIDC provider and a dedicated OAuth client for the ChatGPT connector.
-3. Replace the documented server, authorization and token URL placeholders with the actual verified endpoints.
-4. Ensure the access token audience is accepted by the ENTITY auth service.
-5. Configure the connector to request only the required identity scopes.
-6. Test that an unprovisioned identity, revoked session and user without model permission are denied.
-7. Do not publish the connector until security review is complete.
+## Tests
 
-On the user's current personal Free ChatGPT account, custom GPT creation and custom MCP installation are not available. The API contract is ready for an eligible workspace/connector route, but this does not make Qwen callable from the current ChatGPT account automatically.
-
-## ENTITY setup
-
-ENTITY's backend calls the same `POST /v1/chat/completions` endpoint and forwards the current user's short-lived OIDC access token. Do not create a shared browser API key. Do not allow the model to perform tools or operations; the ENTITY tool gateway must separately validate and execute any future tool request.
-
-## Local tests
-
-From this directory, run:
+From this directory:
 
 ```bash
-node --test test/validation.test.js
+npm test
 ```
 
-These tests cover request validation only. They do not verify live authentication, the provider endpoint, ChatGPT OAuth, Cloudflare deployment or model quality.
+The tests validate request shape, fail-closed registry defaults and integration metadata. They do not verify live inference, OIDC, authorization, ChatGPT OAuth, Cloudflare deployment or model quality.
 
-## Current blockers
+## ChatGPT availability
 
-- PR #5 and PR #6 are still pending and must not be merged by this integration.
-- The identity provider, production/staging auth service and resource registry are not provisioned.
-- No Qwen inference endpoint is approved or configured.
-- The ChatGPT account plan currently does not support creating a new custom GPT or adding a custom MCP server.
-- No live end-to-end test has been performed.
+The OpenAPI contract can be imported into a supported custom GPT Action setup after the Worker and OAuth client are deployed and reviewed. Custom connector availability depends on ChatGPT plan/workspace features. The API contract itself does not create a live connection.
+
+## Release gates
+
+1. Review PR #5/#6 and validate identity/auth service in staging.
+2. Register the Qwen resource and confirm permission enforcement.
+3. Select and verify a genuinely free or approved local Qwen inference endpoint.
+4. Deploy the Worker with inference disabled; configure secrets securely.
+5. Run auth, revocation, denied-access, provider outage and prompt-injection tests.
+6. Activate Qwen only after explicit owner approval.
+7. Implement and evaluate specialist adapters one at a time.
+8. Configure the ChatGPT Action/MCP route only after OAuth and plan eligibility are confirmed.
